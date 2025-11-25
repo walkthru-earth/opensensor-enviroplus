@@ -67,10 +67,13 @@ class PolarsSensorCollector:
         # Sync setup
         self.storage_config = storage_config
         self.sync_client = None
-        self.last_sync = datetime.now(timezone.utc)
 
         if storage_config and storage_config.sync_enabled:
             self.sync_client = ObstoreSync(config=storage_config, logger=logger)
+            # Calculate next clock-aligned sync boundary (00, 15, 30, 45 minutes)
+            self.next_sync_time = self._calculate_next_sync_boundary()
+        else:
+            self.next_sync_time = None
 
         # Initialize sensors
         self._init_sensors()
@@ -243,6 +246,29 @@ class PolarsSensorCollector:
 
         return next_boundary
 
+    def _calculate_next_sync_boundary(self) -> datetime:
+        """
+        Calculate the next clock-aligned sync boundary.
+
+        Aligns syncs to 0, 15, 30, 45 minute marks for consistency with batch writes.
+        Example: If started at 10:37 with 15min sync, next boundary is 10:45.
+        """
+        now = datetime.now(timezone.utc)
+        sync_minutes = self.storage_config.sync_interval_minutes
+
+        # Calculate current minute aligned to sync interval
+        current_minute = now.minute
+        next_boundary_minute = ((current_minute // sync_minutes) + 1) * sync_minutes
+
+        # Create next boundary time
+        if next_boundary_minute >= 60:
+            # Rolls over to next hour
+            next_boundary = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+        else:
+            next_boundary = now.replace(minute=next_boundary_minute, second=0, microsecond=0)
+
+        return next_boundary
+
     def collect_reading(self) -> None:
         """Collect a sensor reading and buffer it."""
         reading = self.read_sensors()
@@ -333,13 +359,16 @@ class PolarsSensorCollector:
         return df
 
     def should_sync(self) -> bool:
-        """Check if it's time to sync to cloud storage."""
-        if not self.sync_client or not self.storage_config:
+        """
+        Check if it's time to sync to cloud storage.
+
+        Uses clock-aligned boundaries (00, 15, 30, 45 minutes) instead of elapsed time.
+        This ensures consistent sync times across all sensors, matching batch writes.
+        """
+        if not self.sync_client or not self.storage_config or not self.next_sync_time:
             return False
 
-        elapsed = (datetime.now(timezone.utc) - self.last_sync).total_seconds()
-        sync_interval_seconds = self.storage_config.sync_interval_minutes * 60
-        return elapsed >= sync_interval_seconds
+        return datetime.now(timezone.utc) >= self.next_sync_time
 
     def sync_data(self) -> None:
         """Sync data to cloud storage."""
@@ -354,7 +383,11 @@ class PolarsSensorCollector:
                     self.logger,
                     "SYNC",
                 )
-            self.last_sync = datetime.now(timezone.utc)
+
+            # Calculate next clock-aligned sync boundary
+            self.next_sync_time = self._calculate_next_sync_boundary()
+            self.logger.info(f"Next sync at: {self.next_sync_time.strftime('%H:%M:%S UTC')}")
+
         except Exception as e:
             log_error(e, self.logger, "Cloud sync failed")
 
@@ -440,9 +473,15 @@ class PolarsSensorCollector:
         )
 
         if self.sync_client:
+            sync_minutes = self.storage_config.sync_interval_minutes
             log_status(
-                f"Auto-sync enabled: {self.storage_config.sync_interval_minutes}min intervals "
+                f"Auto-sync enabled: clock-aligned {sync_minutes}min intervals (00, 15, 30, 45) "
                 f"to {self.storage_config.storage_bucket}",
+                self.logger,
+                "SYNC",
+            )
+            log_status(
+                f"First sync at: {self.next_sync_time.strftime('%H:%M:%S UTC')}",
                 self.logger,
                 "SYNC",
             )

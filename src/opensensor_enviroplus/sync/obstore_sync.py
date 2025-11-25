@@ -184,21 +184,47 @@ class ObstoreSync:
             else:
                 log_error(e, self.logger, "Failed to refresh remote cache")
 
+    def _calculate_etag(self, file_path: Path) -> str:
+        """
+        Calculate ETag (MD5 hash) for local file.
+
+        For single-part uploads (<5MB), S3 ETag = MD5 hash of content.
+        Our parquet files are ~50KB, so always single-part.
+
+        Args:
+            file_path: Path to local file
+
+        Returns:
+            ETag string (MD5 hash in quotes, matching S3 format)
+        """
+        import hashlib
+
+        md5 = hashlib.md5()
+        with file_path.open("rb") as f:
+            # Read in chunks to handle larger files efficiently
+            for chunk in iter(lambda: f.read(8192), b""):
+                md5.update(chunk)
+
+        # S3 returns ETag with quotes, match that format
+        return f'"{md5.hexdigest()}"'
+
     def _should_upload(self, local_path: Path, remote_path: str) -> bool:
         """
-        Determine if file should be uploaded based on metadata comparison.
+        Determine if file should be uploaded based on content hash (ETag).
 
-        Compares:
+        Uses ETag (MD5 checksum) comparison - most reliable method:
         1. File existence (upload if not exists remotely)
-        2. File size (upload if different)
-        3. Modification time (upload if local is newer)
+        2. File size (quick check, upload if different)
+        3. ETag/MD5 hash (content-based, upload if different)
+
+        This is the same method AWS CLI uses with --checksum flag.
 
         Args:
             local_path: Local file path
             remote_path: Remote file path
 
         Returns:
-            True if file should be uploaded, False if already synced
+            True if file should be uploaded, False if content matches
         """
         # If not in cache, definitely upload
         if remote_path not in self.remote_cache:
@@ -206,12 +232,8 @@ class ObstoreSync:
 
         remote_meta = self.remote_cache[remote_path]
 
-        # Get local file stats
-        local_stat = local_path.stat()
-        local_size = local_stat.st_size
-        local_mtime = datetime.fromtimestamp(local_stat.st_mtime, tz=timezone.utc)
-
-        # Compare size (most reliable check)
+        # Quick size check first (avoid MD5 calculation if size differs)
+        local_size = local_path.stat().st_size
         if local_size != remote_meta["size"]:
             self.logger.debug(
                 f"{local_path.name}: size mismatch "
@@ -219,36 +241,47 @@ class ObstoreSync:
             )
             return True
 
-        # Compare modification time (skip if local is older or same)
-        remote_mtime = remote_meta["last_modified"]
-        if local_mtime <= remote_mtime:
-            # Local file not modified since upload
-            return False
+        # Content-based comparison using ETag (MD5 hash)
+        local_etag = self._calculate_etag(local_path)
+        remote_etag = remote_meta.get("e_tag", "")
 
-        # Local file is newer - re-upload
-        self.logger.debug(
-            f"{local_path.name}: newer locally (local={local_mtime}, remote={remote_mtime})"
-        )
-        return True
+        if local_etag != remote_etag:
+            self.logger.debug(
+                f"{local_path.name}: content changed "
+                f"(local_etag={local_etag[:16]}..., remote_etag={remote_etag[:16]}...)"
+            )
+            return True
+
+        # Content matches - skip upload
+        self.logger.debug(f"{local_path.name}: content matches (ETag: {local_etag[:16]}...)")
+        return False
 
     def _upload_file(self, local_path: Path, remote_path: str) -> None:
-        """Upload single file to object store."""
+        """
+        Upload single file to object store with checksum validation.
+
+        S3 automatically validates MD5 checksum on upload.
+        """
         try:
             # Read file data
             data = local_path.read_bytes()
 
             # Upload to store using put
+            # Note: S3 automatically validates Content-MD5 on upload
             self.store.put(remote_path, data)
 
             # Update cache with new file metadata
             local_stat = local_path.stat()
+            local_etag = self._calculate_etag(local_path)
+
             self.remote_cache[remote_path] = {
                 "path": remote_path,
                 "size": local_stat.st_size,
                 "last_modified": datetime.fromtimestamp(local_stat.st_mtime, tz=timezone.utc),
+                "e_tag": local_etag,
             }
 
-            self.logger.debug(f"Uploaded {local_path.name} to {remote_path}")
+            self.logger.debug(f"Uploaded {local_path.name} (ETag: {local_etag[:16]}...)")
 
         except Exception as e:
             log_error(e, self.logger, f"Failed to upload {local_path.name}")

@@ -58,6 +58,10 @@ class PolarsSensorCollector:
         self.batch_start = datetime.now(timezone.utc)
         self.cpu_temps: list[float] = []
 
+        # Sensor warm-up tracking
+        self.readings_count = 0
+        self.warmup_readings = 10  # Skip first 10 readings for sensor stabilization
+
         # Sync setup
         self.storage_config = storage_config
         self.sync_client = None
@@ -217,6 +221,15 @@ class PolarsSensorCollector:
     def collect_reading(self) -> None:
         """Collect a sensor reading and buffer it."""
         reading = self.read_sensors()
+        self.readings_count += 1
+
+        # Skip initial readings during sensor warm-up period
+        if self.readings_count <= self.warmup_readings:
+            self.logger.debug(
+                f"Skipping warm-up reading {self.readings_count}/{self.warmup_readings}"
+            )
+            return
+
         self.buffer.append(reading)
 
     def should_flush(self) -> bool:
@@ -320,6 +333,10 @@ class PolarsSensorCollector:
         Write Hive-partitioned Parquet files matching opensensor.space architecture.
 
         Output structure: station={id}/year={y}/month={m}/day={d}/data_{HHMM}.parquet
+
+        Note: station_id is NOT stored in the parquet file itself - it's only in the
+        directory structure. DuckDB automatically extracts it with hive_partitioning=true.
+        This follows Hive partitioning best practices and reduces file size.
         """
         # Get batch end time for filename
         batch_end = datetime.now(timezone.utc)
@@ -351,8 +368,12 @@ class PolarsSensorCollector:
         # Full file path
         file_path = partition_path / filename
 
+        # Remove partition columns from dataframe (station_id is in directory structure)
+        # This follows Hive partitioning best practices and reduces file size
+        df_to_write = df.drop("station_id")
+
         # Write Parquet with compression
-        df.write_parquet(
+        df_to_write.write_parquet(
             str(file_path),
             compression=self.config.compression,
             statistics=True,
@@ -360,7 +381,7 @@ class PolarsSensorCollector:
         )
 
         self.logger.debug(
-            f"Wrote {len(df)} rows to {partition_path.relative_to(self.config.output_dir)}/{filename}"
+            f"Wrote {len(df_to_write)} rows to {partition_path.relative_to(self.config.output_dir)}/{filename}"
         )
 
     def run(self) -> None:
@@ -370,6 +391,14 @@ class PolarsSensorCollector:
             f"{self.config.batch_duration}s batches",
             self.logger,
             "",
+        )
+
+        # Warm-up notification
+        warmup_time = self.warmup_readings * self.config.read_interval
+        log_status(
+            f"Sensor warm-up: skipping first {self.warmup_readings} readings (~{warmup_time}s)",
+            self.logger,
+            "WARMUP",
         )
 
         if self.sync_client:

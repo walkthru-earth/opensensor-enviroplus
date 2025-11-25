@@ -5,7 +5,7 @@ Memory-efficient streaming with Delta Lake for append-capable storage.
 
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -55,7 +55,9 @@ class PolarsSensorCollector:
         self.config = config
         self.logger = logger
         self.buffer: list[dict[str, Any]] = []
-        self.batch_start = datetime.now(timezone.utc)
+
+        # Calculate next clock-aligned batch boundary (00, 15, 30, 45 minutes)
+        self.next_batch_time = self._calculate_next_batch_boundary()
         self.cpu_temps: list[float] = []
 
         # Sensor warm-up tracking
@@ -218,6 +220,29 @@ class PolarsSensorCollector:
         log_sensor_reading(data, self.logger)
         return data
 
+    def _calculate_next_batch_boundary(self) -> datetime:
+        """
+        Calculate the next clock-aligned batch boundary.
+
+        Aligns batches to 0, 15, 30, 45 minute marks for consistency.
+        Example: If started at 10:37, next boundary is 10:45.
+        """
+        now = datetime.now(timezone.utc)
+        batch_minutes = self.config.batch_duration // 60  # Convert seconds to minutes
+
+        # Calculate current minute aligned to batch interval
+        current_minute = now.minute
+        next_boundary_minute = ((current_minute // batch_minutes) + 1) * batch_minutes
+
+        # Create next boundary time
+        if next_boundary_minute >= 60:
+            # Rolls over to next hour
+            next_boundary = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+        else:
+            next_boundary = now.replace(minute=next_boundary_minute, second=0, microsecond=0)
+
+        return next_boundary
+
     def collect_reading(self) -> None:
         """Collect a sensor reading and buffer it."""
         reading = self.read_sensors()
@@ -233,9 +258,13 @@ class PolarsSensorCollector:
         self.buffer.append(reading)
 
     def should_flush(self) -> bool:
-        """Check if it's time to flush the batch."""
-        elapsed = (datetime.now(timezone.utc) - self.batch_start).total_seconds()
-        return elapsed >= self.config.batch_duration
+        """
+        Check if it's time to flush the batch.
+
+        Uses clock-aligned boundaries (00, 15, 30, 45 minutes) instead of elapsed time.
+        This ensures consistent batch times across all sensors.
+        """
+        return datetime.now(timezone.utc) >= self.next_batch_time
 
     def flush_batch(self) -> None:
         """Write buffered readings using Polars and Delta Lake."""
@@ -256,12 +285,13 @@ class PolarsSensorCollector:
             # Write Hive-partitioned Parquet
             self._write_parquet_partitioned(df)
 
-            # Clear buffer
+            # Clear buffer and calculate next boundary
             self.buffer.clear()
-            self.batch_start = datetime.now(timezone.utc)
+            self.next_batch_time = self._calculate_next_batch_boundary()
 
             duration = time.time() - start_time
             log_batch_write(count, self.config.output_dir, duration, self.logger)
+            self.logger.info(f"Next batch at: {self.next_batch_time.strftime('%H:%M:%S UTC')}")
 
         except Exception as e:
             log_error(e, self.logger, "Failed to flush batch")
@@ -386,9 +416,10 @@ class PolarsSensorCollector:
 
     def run(self) -> None:
         """Main collection loop."""
+        batch_minutes = self.config.batch_duration // 60
         log_status(
             f"Starting collection: {self.config.read_interval}s interval, "
-            f"{self.config.batch_duration}s batches",
+            f"clock-aligned {batch_minutes}min batches (00, 15, 30, 45)",
             self.logger,
             "",
         )
@@ -399,6 +430,13 @@ class PolarsSensorCollector:
             f"Sensor warm-up: skipping first {self.warmup_readings} readings (~{warmup_time}s)",
             self.logger,
             "WARMUP",
+        )
+
+        # Next batch time
+        log_status(
+            f"First batch at: {self.next_batch_time.strftime('%H:%M:%S UTC')}",
+            self.logger,
+            "BATCH",
         )
 
         if self.sync_client:

@@ -11,6 +11,7 @@ from rich.console import Console
 
 from opensensor_enviroplus.collector.polars_collector import PolarsSensorCollector
 from opensensor_enviroplus.config.settings import AppConfig, SensorConfig, StorageConfig
+from opensensor_enviroplus.service.manager import ServiceManager
 from opensensor_enviroplus.sync.obstore_sync import ObstoreSync
 from opensensor_enviroplus.utils.logging import setup_logging
 from opensensor_enviroplus.utils.uuid_gen import generate_station_id, validate_station_id
@@ -346,6 +347,395 @@ def version():
     console.print("Version: [green]0.1.0[/green]")
     console.print("Stack: Polars, PyArrow, Delta Lake, obstore")
     console.print("Website: [cyan]https://opensensor.space[/cyan]\n")
+
+
+# Service management subcommand group
+service_app = typer.Typer(
+    name="service",
+    help="Manage opensensor as a systemd service",
+)
+app.add_typer(service_app, name="service")
+
+
+@service_app.command("install")
+def service_install():
+    """
+    Install opensensor as a systemd service.
+    Creates the service file at /etc/systemd/system/opensensor.service
+    """
+    console.print("\n[bold blue]Installing systemd service...[/bold blue]\n")
+
+    try:
+        manager = ServiceManager()
+
+        # Show what will be installed
+        console.print("[dim]Auto-detected configuration:[/dim]")
+        console.print(f"  User: [cyan]{manager.user}[/cyan]")
+        console.print(f"  Group: [cyan]{manager.group}[/cyan]")
+        console.print(f"  Project: [cyan]{manager.project_root}[/cyan]")
+        console.print(f"  Python: [cyan]{manager.python_path}[/cyan]")
+        console.print(f"  Venv: [cyan]{manager.venv_path}[/cyan]\n")
+
+        # Install
+        manager.install()
+
+        console.print(f"[green]Service installed successfully![/green]")
+        console.print(f"Service file: [cyan]{manager.service_file}[/cyan]\n")
+        console.print("[dim]Next steps:[/dim]")
+        console.print("  Enable on boot: [cyan]sudo opensensor service enable[/cyan]")
+        console.print("  Start service: [cyan]sudo opensensor service start[/cyan]")
+        console.print("  Or do both: [cyan]sudo opensensor service setup[/cyan]\n")
+
+    except PermissionError as e:
+        console.print(f"[red]ERROR: {e}[/red]")
+        sys.exit(1)
+    except Exception as e:
+        console.print(f"[red]ERROR: Installation failed: {e}[/red]")
+        sys.exit(1)
+
+
+@service_app.command("uninstall")
+def service_uninstall():
+    """
+    Uninstall the systemd service.
+    Removes the service file from /etc/systemd/system/
+    """
+    console.print("\n[bold blue]Uninstalling systemd service...[/bold blue]\n")
+
+    try:
+        manager = ServiceManager()
+
+        if not manager.is_installed():
+            console.print("[yellow]Service is not installed[/yellow]")
+            sys.exit(0)
+
+        # Stop if running
+        if manager.is_active():
+            console.print("Stopping service...")
+            manager.stop()
+
+        # Disable if enabled
+        if manager.is_enabled():
+            console.print("Disabling service...")
+            manager.disable()
+
+        # Uninstall
+        manager.uninstall()
+
+        console.print("[green]Service uninstalled successfully![/green]\n")
+
+    except PermissionError as e:
+        console.print(f"[red]ERROR: {e}[/red]")
+        sys.exit(1)
+    except Exception as e:
+        console.print(f"[red]ERROR: Uninstallation failed: {e}[/red]")
+        sys.exit(1)
+
+
+@service_app.command("enable")
+def service_enable():
+    """
+    Enable the service to start automatically on boot.
+    """
+    try:
+        manager = ServiceManager()
+
+        if not manager.is_installed():
+            console.print("[red]ERROR: Service is not installed. Run 'sudo opensensor service install' first.[/red]")
+            sys.exit(1)
+
+        manager.enable()
+        console.print("[green]Service enabled successfully![/green]")
+        console.print("[dim]The service will now start automatically on boot[/dim]\n")
+
+    except PermissionError as e:
+        console.print(f"[red]ERROR: {e}[/red]")
+        sys.exit(1)
+    except Exception as e:
+        console.print(f"[red]ERROR: {e}[/red]")
+        sys.exit(1)
+
+
+@service_app.command("disable")
+def service_disable():
+    """
+    Disable the service from starting automatically on boot.
+    """
+    try:
+        manager = ServiceManager()
+
+        if not manager.is_installed():
+            console.print("[yellow]Service is not installed[/yellow]")
+            sys.exit(0)
+
+        manager.disable()
+        console.print("[green]Service disabled successfully![/green]")
+        console.print("[dim]The service will no longer start automatically on boot[/dim]\n")
+
+    except PermissionError as e:
+        console.print(f"[red]ERROR: {e}[/red]")
+        sys.exit(1)
+    except Exception as e:
+        console.print(f"[red]ERROR: {e}[/red]")
+        sys.exit(1)
+
+
+@service_app.command("start")
+def service_start():
+    """
+    Start the opensensor service.
+    """
+    try:
+        manager = ServiceManager()
+
+        if not manager.is_installed():
+            console.print("[red]ERROR: Service is not installed. Run 'sudo opensensor service install' first.[/red]")
+            sys.exit(1)
+
+        manager.start()
+        console.print("[green]Service started successfully![/green]\n")
+
+    except PermissionError as e:
+        console.print(f"[red]ERROR: {e}[/red]")
+        sys.exit(1)
+    except Exception as e:
+        console.print(f"[red]ERROR: {e}[/red]")
+        sys.exit(1)
+
+
+@service_app.command("stop")
+def service_stop():
+    """
+    Stop the opensensor service.
+    """
+    try:
+        manager = ServiceManager()
+
+        if not manager.is_installed():
+            console.print("[yellow]Service is not installed[/yellow]")
+            sys.exit(0)
+
+        manager.stop()
+        console.print("[green]Service stopped successfully![/green]\n")
+
+    except PermissionError as e:
+        console.print(f"[red]ERROR: {e}[/red]")
+        sys.exit(1)
+    except Exception as e:
+        console.print(f"[red]ERROR: {e}[/red]")
+        sys.exit(1)
+
+
+@service_app.command("restart")
+def service_restart():
+    """
+    Restart the opensensor service.
+    """
+    try:
+        manager = ServiceManager()
+
+        if not manager.is_installed():
+            console.print("[red]ERROR: Service is not installed. Run 'sudo opensensor service install' first.[/red]")
+            sys.exit(1)
+
+        manager.restart()
+        console.print("[green]Service restarted successfully![/green]\n")
+
+    except PermissionError as e:
+        console.print(f"[red]ERROR: {e}[/red]")
+        sys.exit(1)
+    except Exception as e:
+        console.print(f"[red]ERROR: {e}[/red]")
+        sys.exit(1)
+
+
+@service_app.command("status")
+def service_status():
+    """
+    Show the current status of the opensensor service.
+    """
+    try:
+        manager = ServiceManager()
+
+        if not manager.is_installed():
+            console.print("[yellow]Service is not installed[/yellow]")
+            console.print("\nRun [cyan]sudo opensensor service install[/cyan] to install the service\n")
+            sys.exit(0)
+
+        # Get status
+        status_output, is_active = manager.status()
+
+        console.print("\n[bold blue]Service Status[/bold blue]\n")
+
+        # Show status indicator
+        if is_active:
+            console.print(" [green]ACTIVE[/green] - Service is running")
+        else:
+            console.print(" [red]INACTIVE[/red] - Service is stopped")
+
+        console.print(f"Enabled: [cyan]{'Yes' if manager.is_enabled() else 'No'}[/cyan]")
+        console.print(f"Installed: [cyan]{'Yes' if manager.is_installed() else 'No'}[/cyan]\n")
+
+        # Show systemctl status output
+        console.print("[dim]Detailed status:[/dim]")
+        console.print(status_output)
+
+    except Exception as e:
+        console.print(f"[red]ERROR: {e}[/red]")
+        sys.exit(1)
+
+
+@service_app.command("logs")
+def service_logs(
+    follow: bool = typer.Option(False, "--follow", "-f", help="Follow log output"),
+    lines: int = typer.Option(50, "--lines", "-n", help="Number of lines to show"),
+):
+    """
+    View service logs from journalctl.
+    """
+    try:
+        manager = ServiceManager()
+
+        if not manager.is_installed():
+            console.print("[yellow]Service is not installed[/yellow]")
+            sys.exit(0)
+
+        if follow:
+            console.print(f"[dim]Following service logs... (Ctrl+C to stop)[/dim]\n")
+
+        manager.get_logs(lines=lines, follow=follow)
+
+    except Exception as e:
+        console.print(f"[red]ERROR: {e}[/red]")
+        sys.exit(1)
+
+
+@service_app.command("info")
+def service_info():
+    """
+    Show service configuration and auto-detected paths.
+    """
+    try:
+        manager = ServiceManager()
+        info = manager.get_info()
+
+        console.print("\n[bold blue]Service Configuration[/bold blue]\n")
+
+        console.print("[bold]Auto-detected paths:[/bold]")
+        console.print(f"  User: [cyan]{info['user']}[/cyan]")
+        console.print(f"  Group: [cyan]{info['group']}[/cyan]")
+        console.print(f"  Project root: [cyan]{info['project_root']}[/cyan]")
+        console.print(f"  Virtual env: [cyan]{info['venv_path']}[/cyan]")
+        console.print(f"  Python: [cyan]{info['python_path']}[/cyan]")
+        console.print(f"  Config file: [cyan]{info['env_file']}[/cyan]")
+
+        console.print("\n[bold]Service status:[/bold]")
+        console.print(f"  Service name: [cyan]{info['service_name']}[/cyan]")
+        console.print(f"  Service file: [cyan]{info['service_file']}[/cyan]")
+        console.print(f"  Installed: [cyan]{'Yes' if info['installed'] else 'No'}[/cyan]")
+
+        if info['installed']:
+            console.print(f"  Enabled: [cyan]{'Yes' if info['enabled'] else 'No'}[/cyan]")
+            console.print(f"  Active: [cyan]{'Yes' if info['active'] else 'No'}[/cyan]")
+
+        console.print()
+
+    except Exception as e:
+        console.print(f"[red]ERROR: {e}[/red]")
+        sys.exit(1)
+
+
+@service_app.command("setup")
+def service_setup():
+    """
+    Quick setup: install + enable + start the service.
+    Convenience command that combines install, enable, and start.
+    """
+    console.print("\n[bold blue]Setting up opensensor service...[/bold blue]\n")
+
+    try:
+        manager = ServiceManager()
+
+        # Install
+        console.print("Step 1/3: Installing service...")
+        console.print(f"  User: [cyan]{manager.user}[/cyan]")
+        console.print(f"  Project: [cyan]{manager.project_root}[/cyan]")
+        manager.install()
+        console.print("[green]Installed![/green]\n")
+
+        # Enable
+        console.print("Step 2/3: Enabling service...")
+        manager.enable()
+        console.print("[green]Enabled![/green]\n")
+
+        # Start
+        console.print("Step 3/3: Starting service...")
+        manager.start()
+        console.print("[green]Started![/green]\n")
+
+        console.print("[bold green]Service setup complete![/bold green]\n")
+        console.print("The opensensor service is now:")
+        console.print(" Running in the background")
+        console.print(" Enabled to start on boot")
+        console.print(" Collecting sensor data\n")
+
+        console.print("Useful commands:")
+        console.print("  View status: [cyan]sudo opensensor service status[/cyan]")
+        console.print("  View logs: [cyan]sudo opensensor service logs -f[/cyan]")
+        console.print("  Stop service: [cyan]sudo opensensor service stop[/cyan]\n")
+
+    except PermissionError as e:
+        console.print(f"[red]ERROR: {e}[/red]")
+        sys.exit(1)
+    except Exception as e:
+        console.print(f"[red]ERROR: Setup failed: {e}[/red]")
+        sys.exit(1)
+
+
+@service_app.command("remove")
+def service_remove():
+    """
+    Complete removal: stop + disable + uninstall the service.
+    Convenience command that completely removes the service.
+    """
+    console.print("\n[bold blue]Removing opensensor service...[/bold blue]\n")
+
+    try:
+        manager = ServiceManager()
+
+        if not manager.is_installed():
+            console.print("[yellow]Service is not installed[/yellow]")
+            sys.exit(0)
+
+        # Stop
+        if manager.is_active():
+            console.print("Step 1/3: Stopping service...")
+            manager.stop()
+            console.print("[green]Stopped![/green]\n")
+        else:
+            console.print("Step 1/3: Service already stopped\n")
+
+        # Disable
+        if manager.is_enabled():
+            console.print("Step 2/3: Disabling service...")
+            manager.disable()
+            console.print("[green]Disabled![/green]\n")
+        else:
+            console.print("Step 2/3: Service already disabled\n")
+
+        # Uninstall
+        console.print("Step 3/3: Uninstalling service...")
+        manager.uninstall()
+        console.print("[green]Uninstalled![/green]\n")
+
+        console.print("[bold green]Service removed completely![/bold green]\n")
+
+    except PermissionError as e:
+        console.print(f"[red]ERROR: {e}[/red]")
+        sys.exit(1)
+    except Exception as e:
+        console.print(f"[red]ERROR: Removal failed: {e}[/red]")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

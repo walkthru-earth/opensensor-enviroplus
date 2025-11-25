@@ -178,6 +178,10 @@ def start(
         storage_config = StorageConfig()
         app_config = AppConfig()
 
+        # Create required directories
+        sensor_config.output_dir.mkdir(parents=True, exist_ok=True)
+        app_config.log_dir.mkdir(parents=True, exist_ok=True)
+
         # Setup logging
         log_file = app_config.log_dir / "opensensor.log"
         logger = setup_logging(level=app_config.log_level, log_file=log_file)

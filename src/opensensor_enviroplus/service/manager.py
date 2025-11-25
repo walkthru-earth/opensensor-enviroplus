@@ -217,6 +217,18 @@ WantedBy=multi-user.target
                 "Run 'opensensor setup' first to create configuration."
             )
 
+        # Create required directories for mount namespacing
+        output_dir = self.project_root / "output"
+        logs_dir = self.project_root / "logs"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        logs_dir.mkdir(parents=True, exist_ok=True)
+
+        # Set ownership to the service user
+        import shutil
+
+        shutil.chown(str(output_dir), user=self.user, group=self.group)
+        shutil.chown(str(logs_dir), user=self.user, group=self.group)
+
         # Generate service content
         service_content = self._generate_service_content()
 

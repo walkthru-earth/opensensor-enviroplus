@@ -1,9 +1,16 @@
 """
 Cloud storage sync using obstore (modern Rust-based object store library).
 Supports S3, GCS, Azure, and more with high performance.
+
+Features:
+- Incremental sync (only uploads new/modified files)
+- Offline-first (works without internet, syncs when available)
+- Metadata comparison (size + last_modified)
+- Bandwidth efficient
 """
 
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 
 from obstore.store import S3Store, from_url
@@ -27,6 +34,8 @@ class ObstoreSync:
         self.config = config
         self.logger = logger
         self.store: S3Store | None = None
+        self.remote_cache: dict[str, dict] = {}  # Cache of remote file metadata
+        self.is_offline = False  # Track offline state
 
         if config.sync_enabled:
             self._init_store()
@@ -72,7 +81,10 @@ class ObstoreSync:
 
     def sync_directory(self, local_dir: Path) -> int:
         """
-        Sync local directory to cloud storage.
+        Incrementally sync local directory to cloud storage.
+
+        Only uploads new or modified files based on metadata comparison.
+        Works offline - continues local collection, syncs when network available.
 
         The store prefix is automatically applied by obstore from the URL.
         All paths are relative to the configured prefix.
@@ -81,7 +93,7 @@ class ObstoreSync:
             local_dir: Local directory to sync
 
         Returns:
-            Number of files synced
+            Number of files synced (0 if offline or no new files)
         """
         if not self.store:
             self.logger.warning("Sync not configured")
@@ -93,27 +105,131 @@ class ObstoreSync:
             return 0
 
         files_synced = 0
+        files_skipped = 0
 
         try:
+            # Refresh remote file cache
+            self._refresh_remote_cache()
+
+            # If offline, skip sync but don't fail
+            if self.is_offline:
+                self.logger.info("Offline - skipping sync, will retry next interval")
+                return 0
+
             # Find all Parquet files (Hive-partitioned structure)
             for file_path in local_dir.rglob("*.parquet"):
                 # Create remote path maintaining directory structure
-                # Obstore automatically applies prefix from URL
                 relative_path = file_path.relative_to(local_dir)
                 remote_path = str(relative_path).replace("\\", "/")
 
-                # Upload file (prefix auto-applied by obstore)
-                self._upload_file(file_path, remote_path)
-                files_synced += 1
+                # Check if file needs upload
+                if self._should_upload(file_path, remote_path):
+                    self._upload_file(file_path, remote_path)
+                    files_synced += 1
+                else:
+                    files_skipped += 1
+                    self.logger.debug(f"Skipping {file_path.name} (already synced)")
 
-            log_status(
-                f"Synced {files_synced} files to {self.config.storage_bucket}", self.logger, "SYNC"
-            )
+            if files_synced > 0:
+                log_status(
+                    f"Synced {files_synced} new files to {self.config.storage_bucket} "
+                    f"({files_skipped} already synced)",
+                    self.logger,
+                    "SYNC",
+                )
+            elif files_skipped > 0:
+                self.logger.info(f"All {files_skipped} files already synced")
 
         except Exception as e:
-            log_error(e, self.logger, f"Sync failed after {files_synced} files")
+            # Network error - mark as offline, continue collecting
+            if "connection" in str(e).lower() or "network" in str(e).lower():
+                self.is_offline = True
+                self.logger.warning(f"Network error - going offline: {e}")
+            else:
+                log_error(e, self.logger, f"Sync failed after {files_synced} files")
 
         return files_synced
+
+    def _refresh_remote_cache(self) -> None:
+        """
+        Refresh cache of remote file metadata.
+
+        Uses obstore.list() to get metadata (path, size, last_modified, etag).
+        This enables incremental sync by comparing local vs remote state.
+        """
+        if not self.store:
+            return
+
+        try:
+            # List all remote files with metadata
+            # obstore returns: {'path': str, 'size': int, 'last_modified': datetime, ...}
+            remote_objects = list(self.store.list())
+
+            # Build cache: {path: metadata}
+            self.remote_cache = {obj["path"]: obj for obj in remote_objects}
+
+            # Back online if we were offline
+            if self.is_offline:
+                self.logger.info("Network restored - back online")
+                self.is_offline = False
+
+            self.logger.debug(f"Remote cache refreshed: {len(self.remote_cache)} files")
+
+        except Exception as e:
+            # Network error - mark offline
+            if "connection" in str(e).lower() or "network" in str(e).lower():
+                if not self.is_offline:
+                    self.logger.warning("Network unavailable - working offline")
+                self.is_offline = True
+            else:
+                log_error(e, self.logger, "Failed to refresh remote cache")
+
+    def _should_upload(self, local_path: Path, remote_path: str) -> bool:
+        """
+        Determine if file should be uploaded based on metadata comparison.
+
+        Compares:
+        1. File existence (upload if not exists remotely)
+        2. File size (upload if different)
+        3. Modification time (upload if local is newer)
+
+        Args:
+            local_path: Local file path
+            remote_path: Remote file path
+
+        Returns:
+            True if file should be uploaded, False if already synced
+        """
+        # If not in cache, definitely upload
+        if remote_path not in self.remote_cache:
+            return True
+
+        remote_meta = self.remote_cache[remote_path]
+
+        # Get local file stats
+        local_stat = local_path.stat()
+        local_size = local_stat.st_size
+        local_mtime = datetime.fromtimestamp(local_stat.st_mtime, tz=timezone.utc)
+
+        # Compare size (most reliable check)
+        if local_size != remote_meta["size"]:
+            self.logger.debug(
+                f"{local_path.name}: size mismatch "
+                f"(local={local_size}, remote={remote_meta['size']})"
+            )
+            return True
+
+        # Compare modification time (skip if local is older or same)
+        remote_mtime = remote_meta["last_modified"]
+        if local_mtime <= remote_mtime:
+            # Local file not modified since upload
+            return False
+
+        # Local file is newer - re-upload
+        self.logger.debug(
+            f"{local_path.name}: newer locally (local={local_mtime}, remote={remote_mtime})"
+        )
+        return True
 
     def _upload_file(self, local_path: Path, remote_path: str) -> None:
         """Upload single file to object store."""
@@ -123,6 +239,14 @@ class ObstoreSync:
 
             # Upload to store using put
             self.store.put(remote_path, data)
+
+            # Update cache with new file metadata
+            local_stat = local_path.stat()
+            self.remote_cache[remote_path] = {
+                "path": remote_path,
+                "size": local_stat.st_size,
+                "last_modified": datetime.fromtimestamp(local_stat.st_mtime, tz=timezone.utc),
+            }
 
             self.logger.debug(f"Uploaded {local_path.name} to {remote_path}")
 

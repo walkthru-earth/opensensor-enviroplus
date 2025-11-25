@@ -609,6 +609,184 @@ The service manager automatically detects:
 
 ---
 
+## Edge Cases & Error Handling
+
+The system handles numerous edge cases for robust production operation:
+
+### **Data Collection Edge Cases**
+
+**1. Sensor Warm-up Period**
+- **Issue**: Sensors give inaccurate readings when first powered on
+- **Solution**: Skip first 10 readings (~50 seconds)
+- **Details**:
+  - BME280: Self-heating causes 1-2°C temperature error
+  - PMS5003: Fan needs 30s to stabilize
+  - Gas sensors: Need time to reach operating temperature (150°C+)
+- **Code**: `readings_count <= warmup_readings` check in `collect_reading()`
+
+**2. Clock-Aligned Batch Boundaries**
+- **Issue**: Starting at arbitrary times creates inconsistent batch times
+- **Solution**: Align to clock boundaries (00, 15, 30, 45 minutes)
+- **Edge Case**: Hour rollover (e.g., 10:45 → 11:00)
+- **Handling**: `timedelta(hours=1)` when `next_boundary_minute >= 60`
+- **Benefit**: Consistent file timestamps across all sensors
+
+**3. Variable First Batch Size**
+- **Issue**: First batch depends on when script started
+- **Example**: Start at 10:37, first batch at 10:45 = ~8 min (~96 readings)
+- **Handling**: Subsequent batches are full 15 min (~180 readings)
+- **No Problem**: Data is timestamped, variable size is expected
+
+**4. Empty Batches**
+- **Issue**: No data collected (all sensors failed)
+- **Handling**: Log warning, skip write, continue collecting
+- **Code**: `if not self.buffer: logger.warning()` in `flush_batch()`
+
+### **Sensor Hardware Edge Cases**
+
+**5. Temperature Compensation**
+- **Issue**: Raspberry Pi CPU heat affects BME280 readings
+- **Solution**: CPU temperature compensation with configurable factor
+- **Formula**: `temp - ((avg_cpu_temp - temp) / compensation_factor)`
+- **Default Factor**: 2.25 (empirically determined)
+- **Tracking**: Rolling average of last 5 CPU temp readings
+
+**6. PMS5003 Read Timeouts**
+- **Issue**: Particulate sensor occasionally times out
+- **Handling**: Catch `ReadTimeoutError`, set PM values to `None`, continue
+- **Code**: Specific exception handling in `read_sensors()`
+- **Benefit**: One sensor failure doesn't stop entire collection
+
+**7. Sensor Initialization Failures**
+- **Issue**: Sensor hardware not available or I2C failures
+- **Handling**: Set sensor to `None`, continue with available sensors
+- **Mock Mode**: If no sensors available, logs warning and continues
+- **Code**: Try/except blocks in `_init_sensors()`
+
+**8. Gas Sensor Null Values**
+- **Issue**: Gas readings occasionally return `None`
+- **Handling**: Fields default to `None` if sensor read fails
+- **Benefit**: Partial data better than no data
+
+### **Data Storage Edge Cases**
+
+**9. Hive Partition Column Redundancy**
+- **Issue**: `station_id` stored in both directory and parquet file
+- **Solution**: Remove from parquet, keep only in directory structure
+- **Benefit**: Saves ~6KB per file (180 rows × UUID)
+- **Query**: DuckDB auto-extracts with `hive_partitioning=true`
+- **Standard**: Follows Hive/Delta Lake/Iceberg best practices
+
+**10. Directory Creation Race Conditions**
+- **Issue**: Multiple processes creating same directory
+- **Handling**: `mkdir(parents=True, exist_ok=True)`
+- **Benefit**: No crashes if directory exists
+
+**11. Partition Path Validation**
+- **Issue**: Invalid characters in station_id or dates
+- **Solution**: UUID validation in config, datetime validation
+- **Format**: `station={uuid}/year={yyyy}/month={mm}/day={dd}/`
+
+**12. Type Optimization for Memory**
+- **Issue**: Float64 uses 2x memory of Float32
+- **Solution**: Cast all sensor values to Float32
+- **Benefit**: 50% memory reduction for sensor data
+- **Acceptable**: Sensor precision doesn't require Float64
+
+### **Cloud Sync Edge Cases**
+
+**13. Network Failures During Sync**
+- **Issue**: WiFi drops during upload
+- **Handling**: Log error, continue collecting, retry next interval
+- **Code**: Try/except in `sync_data()`, doesn't stop collection
+- **Benefit**: Offline-first architecture
+
+**14. S3 Credential Errors**
+- **Issue**: Invalid AWS credentials or permissions
+- **Handling**: Sync fails, logs error, collection continues
+- **Warning**: Logs accumulate locally until credentials fixed
+
+**15. Sync Interval vs Batch Interval**
+- **Issue**: What if sync_interval < batch_duration?
+- **Handling**: Works fine, syncs whatever files exist
+- **Typical**: Both at 15 minutes for consistency
+
+### **Service Management Edge Cases**
+
+**16. User Detection Under Sudo**
+- **Issue**: `os.environ.get('USER')` returns 'root' when using sudo
+- **Solution**: Check `SUDO_USER` first, fallback to `USER`
+- **Code**: `sudo_user = os.environ.get('SUDO_USER')`
+- **Benefit**: Service runs as actual user, not root
+
+**17. Project Root Detection**
+- **Issue**: Script could be run from anywhere
+- **Solution**: Walk up directory tree looking for `pyproject.toml`
+- **Fallback**: Try current working directory
+- **Code**: `for parent in [current] + list(current.parents)`
+
+**18. Virtual Environment Detection**
+- **Issue**: `.venv` or `venv` or custom name?
+- **Solution**: Check `VIRTUAL_ENV` env var, then `.venv`, then `venv`
+- **Benefit**: Works with UV, virtualenv, venv
+
+**19. Service File Overwrites**
+- **Issue**: Running install twice
+- **Handling**: Overwrites existing file, systemd daemon-reload
+- **Benefit**: Easy updates to service configuration
+
+**20. Service Stop During Batch Write**
+- **Issue**: SIGTERM during parquet write could corrupt file
+- **Handling**: Graceful shutdown, flush current batch on KeyboardInterrupt
+- **Code**: Try/except KeyboardInterrupt in `run()`
+
+### **Development Edge Cases**
+
+**21. Pre-commit Hook Bypass**
+- **Issue**: Emergency commit needed, hooks failing
+- **Solution**: `git commit --no-verify`
+- **Documentation**: Mentioned in CONTRIBUTING.md
+
+**22. Python Version Compatibility**
+- **Issue**: Different Python versions (3.10-3.13)
+- **Testing**: GitHub Actions CI tests on all versions
+- **Type Hints**: Use Python 3.10+ style (`tuple` not `Tuple`)
+
+**23. Ruff Version Mismatches**
+- **Issue**: Local ruff different from pre-commit
+- **Solution**: Pin version in both `pyproject.toml` and `.pre-commit-config.yaml`
+- **Current**: v0.14.6 in both places
+
+**24. Missing .env File**
+- **Issue**: Running without configuration
+- **Handling**: Pydantic raises clear error, tells user to run `opensensor setup`
+- **Code**: FileNotFoundError catch in CLI commands
+
+**25. Log File Growth**
+- **Issue**: Logs accumulate indefinitely
+- **Current**: No rotation implemented (future enhancement)
+- **Workaround**: Monitor with `opensensor status`, manual cleanup if needed
+
+### **Performance Edge Cases**
+
+**26. Large Batch Memory Usage**
+- **Issue**: 15-min batch = ~180 readings × 19 columns
+- **Optimization**: Use Float32, in-memory buffer only
+- **Typical**: ~50-100MB per batch
+- **Safe**: Even on Raspberry Pi Zero W (512MB RAM)
+
+**27. Slow SD Card Writes**
+- **Issue**: SD card performance varies
+- **Mitigation**: Snappy compression (fast), async writes possible
+- **Monitoring**: Log write duration for each batch
+
+**28. I2C Bus Contention**
+- **Issue**: Multiple sensors on same I2C bus
+- **Handling**: Sequential reads, not parallel
+- **Timing**: 5-second interval leaves plenty of time
+
+---
+
 ## Configuration
 
 **Environment Variables** (`.env` file):
@@ -652,9 +830,20 @@ OPENSENSOR_LOG_LEVEL=INFO
 ---
 
 **Last Updated**: 2025-11-25
-**Version**: 1.2
+**Version**: 1.3
 
-## Recent Updates (v1.2)
+## Recent Updates (v1.3)
+
+**Edge Case Documentation** (2025-11-25):
+- Comprehensive edge case handling documentation
+- 28 documented edge cases across all system components
+- Sensor warm-up, clock alignment, error handling details
+
+**Data Optimizations** (2025-11-25):
+- Clock-aligned batch boundaries (00, 15, 30, 45 minutes)
+- Removed station_id from parquet files (Hive partitioning optimization)
+- Sensor warm-up period (skip first 10 readings)
+- Temperature compensation for CPU heat
 
 **Service Management** (2025-11-25):
 - Added systemd service integration

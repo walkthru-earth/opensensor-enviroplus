@@ -222,7 +222,13 @@ git push origin main --tags
 
 #### Testing on TestPyPI
 ```bash
-# Install from TestPyPI
+# Option 1: Run directly with uvx (recommended - no installation)
+uvx --index https://test.pypi.org/simple \
+    --index https://pypi.org/simple \
+    --index-strategy unsafe-best-match \
+    opensensor-enviroplus --help
+
+# Option 2: Install in virtual environment
 uv pip install --index-url https://test.pypi.org/simple/ \
   --extra-index-url https://pypi.org/simple/ \
   opensensor-enviroplus

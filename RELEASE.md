@@ -103,6 +103,33 @@ opensensor --help
 # 5. Click "Run workflow"
 ```
 
+## 🧪 Testing from TestPyPI
+
+After publishing to TestPyPI, you can test the package using `uvx` (one-shot run without permanent install):
+
+```bash
+# Run directly from TestPyPI (recommended - no installation needed)
+uvx --index https://test.pypi.org/simple \
+    --index https://pypi.org/simple \
+    --index-strategy unsafe-best-match \
+    opensensor-enviroplus --help
+
+# Or install in a virtual environment for testing
+uv pip install --index-url https://test.pypi.org/simple/ \
+  --extra-index-url https://pypi.org/simple/ \
+  opensensor-enviroplus
+
+# Test all commands
+opensensor --help
+opensensor service --help
+opensensor service info
+```
+
+**Why multiple `--index` flags?**
+- First `--index`: TestPyPI (our package)
+- Second `--index`: PyPI (dependencies like polars, typer, etc.)
+- `--index-strategy unsafe-best-match`: Allow UV to search all indexes
+
 ## 🧪 Pre-Release Checklist
 
 Before creating a release, verify:
@@ -113,6 +140,7 @@ Before creating a release, verify:
 - [ ] All tests pass: `uv run opensensor --help && uv run opensensor service --help`
 - [ ] Documentation is up to date
 - [ ] Local build works: `uv build`
+- [ ] TestPyPI installation works: `uvx --index https://test.pypi.org/simple --index https://pypi.org/simple --index-strategy unsafe-best-match opensensor-enviroplus --help`
 
 ## 📋 Version Numbering
 

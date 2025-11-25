@@ -163,6 +163,11 @@ jobs:
 
       - name: Try installing published package
         run: |
+          # Test with uvx (one-shot run)
+          uvx opensensor-enviroplus --help
+          uvx opensensor-enviroplus service --help
+
+          # Test traditional install
           uv venv test-env
           source test-env/bin/activate
           uv pip install opensensor-enviroplus

@@ -13,6 +13,9 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 # Install dependencies
 uv sync --all-groups
 
+# Setup pre-commit hooks (recommended)
+uv run pre-commit install
+
 # Run the CLI
 uv run opensensor --help
 ```
@@ -40,12 +43,28 @@ uv run ruff format .
 uv run ruff check . && uv run ruff format --check .
 ```
 
-### Pre-commit Checks
+### Pre-commit Hooks (Automatic)
 
-Before committing, ensure your code passes all checks:
+After installing pre-commit hooks (`uv run pre-commit install`), Ruff will automatically:
+- Check and fix linting issues on every commit
+- Format code automatically
+- Prevent commits with unfixed issues
 
 ```bash
-# Lint and format
+# Install hooks (one-time setup)
+uv run pre-commit install
+
+# Run manually on all files
+uv run pre-commit run --all-files
+
+# Skip hooks if needed (not recommended)
+git commit --no-verify
+```
+
+### Manual Checks (Without Pre-commit)
+
+```bash
+# Lint and format manually
 uv run ruff check --fix .
 uv run ruff format .
 

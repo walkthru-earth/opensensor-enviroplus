@@ -1,0 +1,13 @@
+# Pre-commit hooks for code quality
+# Install: uv pip install pre-commit && pre-commit install
+# Run manually: pre-commit run --all-files
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.14.6
+    hooks:
+      # Run linter
+      - id: ruff
+        args: [--fix]
+      # Run formatter
+      - id: ruff-format

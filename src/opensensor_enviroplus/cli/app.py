@@ -379,7 +379,7 @@ def service_install():
         # Install
         manager.install()
 
-        console.print(f"[green]Service installed successfully![/green]")
+        console.print("[green]Service installed successfully![/green]")
         console.print(f"Service file: [cyan]{manager.service_file}[/cyan]\n")
         console.print("[dim]Next steps:[/dim]")
         console.print("  Enable on boot: [cyan]sudo opensensor service enable[/cyan]")
@@ -441,7 +441,9 @@ def service_enable():
         manager = ServiceManager()
 
         if not manager.is_installed():
-            console.print("[red]ERROR: Service is not installed. Run 'sudo opensensor service install' first.[/red]")
+            console.print(
+                "[red]ERROR: Service is not installed. Run 'sudo opensensor service install' first.[/red]"
+            )
             sys.exit(1)
 
         manager.enable()
@@ -489,7 +491,9 @@ def service_start():
         manager = ServiceManager()
 
         if not manager.is_installed():
-            console.print("[red]ERROR: Service is not installed. Run 'sudo opensensor service install' first.[/red]")
+            console.print(
+                "[red]ERROR: Service is not installed. Run 'sudo opensensor service install' first.[/red]"
+            )
             sys.exit(1)
 
         manager.start()
@@ -535,7 +539,9 @@ def service_restart():
         manager = ServiceManager()
 
         if not manager.is_installed():
-            console.print("[red]ERROR: Service is not installed. Run 'sudo opensensor service install' first.[/red]")
+            console.print(
+                "[red]ERROR: Service is not installed. Run 'sudo opensensor service install' first.[/red]"
+            )
             sys.exit(1)
 
         manager.restart()
@@ -559,7 +565,9 @@ def service_status():
 
         if not manager.is_installed():
             console.print("[yellow]Service is not installed[/yellow]")
-            console.print("\nRun [cyan]sudo opensensor service install[/cyan] to install the service\n")
+            console.print(
+                "\nRun [cyan]sudo opensensor service install[/cyan] to install the service\n"
+            )
             sys.exit(0)
 
         # Get status
@@ -601,7 +609,7 @@ def service_logs(
             sys.exit(0)
 
         if follow:
-            console.print(f"[dim]Following service logs... (Ctrl+C to stop)[/dim]\n")
+            console.print("[dim]Following service logs... (Ctrl+C to stop)[/dim]\n")
 
         manager.get_logs(lines=lines, follow=follow)
 
@@ -634,7 +642,7 @@ def service_info():
         console.print(f"  Service file: [cyan]{info['service_file']}[/cyan]")
         console.print(f"  Installed: [cyan]{'Yes' if info['installed'] else 'No'}[/cyan]")
 
-        if info['installed']:
+        if info["installed"]:
             console.print(f"  Enabled: [cyan]{'Yes' if info['enabled'] else 'No'}[/cyan]")
             console.print(f"  Active: [cyan]{'Yes' if info['active'] else 'No'}[/cyan]")
 

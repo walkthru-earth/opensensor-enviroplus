@@ -59,6 +59,30 @@ opensensor setup --station-id "01234567-89ab-cdef-0123-456789abcdef" --no-intera
 
 ### Usage
 
+#### Run as Systemd Service (Recommended)
+
+```bash
+# Quick setup (install + enable + start)
+sudo opensensor service setup
+
+# View service status
+sudo opensensor service status
+
+# View live logs
+sudo opensensor service logs --follow
+
+# Restart service
+sudo opensensor service restart
+
+# Stop service
+sudo opensensor service stop
+
+# Complete removal
+sudo opensensor service remove
+```
+
+#### Manual Commands
+
 ```bash
 # Start collecting data
 opensensor start
@@ -80,6 +104,24 @@ opensensor logs --follow
 
 # View configuration
 opensensor config
+```
+
+#### Service Management
+
+The service commands automatically detect your user, project path, and virtual environment:
+
+```bash
+# View auto-detected configuration
+opensensor service info
+
+# Individual service commands
+sudo opensensor service install    # Create systemd service
+sudo opensensor service enable     # Enable on boot
+sudo opensensor service start      # Start service
+sudo opensensor service stop       # Stop service
+sudo opensensor service restart    # Restart service
+sudo opensensor service disable    # Disable on boot
+sudo opensensor service uninstall  # Remove service
 ```
 
 ## Configuration

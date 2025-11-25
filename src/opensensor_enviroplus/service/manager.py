@@ -7,7 +7,6 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Tuple
 
 
 class ServiceManager:
@@ -116,7 +115,7 @@ class ServiceManager:
                 "This operation requires sudo privileges. Run with: sudo opensensor service ..."
             )
 
-    def _run_systemctl(self, *args: str) -> Tuple[int, str, str]:
+    def _run_systemctl(self, *args: str) -> tuple[int, str, str]:
         """
         Run systemctl command and return (returncode, stdout, stderr).
 
@@ -254,7 +253,7 @@ WantedBy=multi-user.target
         if returncode != 0:
             raise RuntimeError(f"Failed to restart service: {stderr}")
 
-    def status(self) -> Tuple[str, bool]:
+    def status(self) -> tuple[str, bool]:
         """
         Get service status.
 
@@ -308,8 +307,8 @@ WantedBy=multi-user.target
         except KeyboardInterrupt:
             # Graceful exit on Ctrl+C
             pass
-        except FileNotFoundError:
-            raise RuntimeError("journalctl command not found (is systemd installed?)")
+        except FileNotFoundError as e:
+            raise RuntimeError("journalctl command not found (is systemd installed?)") from e
 
     def get_info(self) -> dict:
         """Get information about detected paths and configuration."""

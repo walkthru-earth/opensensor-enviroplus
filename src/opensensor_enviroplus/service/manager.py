@@ -109,21 +109,39 @@ class ServiceManager:
         return os.geteuid() == 0
 
     def _require_sudo(self) -> None:
-        """Raise error if not running with sudo privileges with helpful instructions."""
+        """
+        Ensure running with sudo privileges.
+
+        If not running as root, automatically re-execute the command with sudo
+        using the current Python interpreter. This allows users to run:
+          uv run opensensor service setup
+
+        And it will automatically become:
+          sudo /path/to/python -m opensensor_enviroplus.cli.app service setup
+        """
         if not self._check_sudo():
-            # Detect the full path to opensensor in the venv
-            opensensor_path = self.venv_path / "bin" / "opensensor"
+            # Get the current Python interpreter (works with venv, uv, etc.)
+            python_exe = sys.executable
 
-            # Build helpful error message with the working command
-            error_msg = (
-                "This operation requires sudo privileges.\n\n"
-                "Run this command:\n"
-                f"  sudo {opensensor_path} service ...\n\n"
-                "Example:\n"
-                f"  sudo {opensensor_path} service setup"
-            )
+            # Reconstruct the command with the same arguments
+            # Use -m to run as module to ensure imports work correctly
+            cmd = [
+                "sudo",
+                python_exe,
+                "-m",
+                "opensensor_enviroplus.cli.app",
+            ] + sys.argv[1:]  # Add original arguments (service, setup, etc.)
 
-            raise PermissionError(error_msg)
+            print(f"This operation requires sudo. Re-executing with: {' '.join(cmd)}")
+
+            # Re-execute with sudo
+            try:
+                os.execvp("sudo", cmd)
+            except OSError as e:
+                raise PermissionError(
+                    f"Failed to execute with sudo: {e}\n"
+                    f"Try manually: sudo {python_exe} -m opensensor_enviroplus.cli.app {' '.join(sys.argv[1:])}"
+                ) from e
 
     def _run_systemctl(self, *args: str) -> tuple[int, str, str]:
         """

@@ -111,16 +111,16 @@ class ServiceManager:
     def _require_sudo(self) -> None:
         """Raise error if not running with sudo privileges with helpful instructions."""
         if not self._check_sudo():
-            # Detect how the command should be run
+            # Detect the full path to opensensor in the venv
             opensensor_path = self.venv_path / "bin" / "opensensor"
 
-            # Build helpful error message with multiple options
+            # Build helpful error message with the working command
             error_msg = (
                 "This operation requires sudo privileges.\n\n"
-                "Run one of these commands:\n"
-                f"  Option 1 (recommended): sudo uv run opensensor service ...\n"
-                f"  Option 2 (full path):   sudo {opensensor_path} service ...\n"
-                f'  Option 3 (preserve env): sudo -E env "PATH=$PATH" opensensor service ...'
+                "Run this command:\n"
+                f"  sudo {opensensor_path} service ...\n\n"
+                "Example:\n"
+                f"  sudo {opensensor_path} service setup"
             )
 
             raise PermissionError(error_msg)

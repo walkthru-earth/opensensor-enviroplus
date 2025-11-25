@@ -89,12 +89,12 @@ sudo uv run opensensor service remove
 
 ## GitHub Actions
 
-This project uses three automated workflows:
+This project uses four automated workflows:
 
 ### 1. CI Workflow (`.github/workflows/ci.yml`)
 - Runs on push/PR to `main` or `develop`
 - Lint & format checking with Ruff
-- Tests on Python 3.10, 3.11, 3.12
+- Tests on Python 3.10, 3.11, 3.12, 3.13
 - Package build verification
 
 ### 2. Lint Workflow (`.github/workflows/lint.yml`)
@@ -102,10 +102,18 @@ This project uses three automated workflows:
 - Runs on all pushes and PRs
 - Uses official Ruff action
 
-### 3. Release Workflow (`.github/workflows/release.yml`)
-- Triggered when a GitHub release is published
-- Builds and publishes to PyPI
-- Uses trusted publishing (no API tokens needed)
+### 3. Publish Workflow (`.github/workflows/publish.yml`) ⭐
+- **Automatic**: Triggered by version tags (e.g., `v0.2.0`)
+- **Manual**: Can be triggered from GitHub UI for TestPyPI or PyPI
+- Builds package with UV
+- Publishes to PyPI using Trusted Publishers (no API tokens!)
+- Creates GitHub releases automatically
+- Verifies installation after publish
+
+### 4. Release Workflow (`.github/workflows/release.yml`)
+- Legacy workflow triggered by GitHub releases
+- Kept for backward compatibility
+- Recommend using `publish.yml` for new releases
 
 ## Making Changes
 
@@ -175,6 +183,53 @@ opensensor-enviroplus/
 │   └── workflows/         # CI/CD workflows
 ├── pyproject.toml         # Project configuration
 └── README.md
+```
+
+## Publishing Releases
+
+### Prerequisites
+1. Configure PyPI Trusted Publisher in your PyPI account settings
+2. Add GitHub repository to trusted publishers
+3. Set up `pypi` and `testpypi` environments in GitHub repository settings
+
+### Release Process
+
+#### Option 1: Automatic Release (Recommended)
+```bash
+# 1. Update version in pyproject.toml
+# 2. Commit and create a version tag
+git add pyproject.toml
+git commit -m "chore: bump version to 0.2.0"
+git tag v0.2.0
+git push origin main --tags
+
+# 3. GitHub Actions automatically:
+#    - Builds the package
+#    - Publishes to PyPI
+#    - Creates GitHub release with notes
+#    - Verifies installation
+```
+
+#### Option 2: Manual Release (Testing)
+```bash
+# 1. Go to GitHub Actions → Publish to PyPI 📦
+# 2. Click "Run workflow"
+# 3. Select target:
+#    - testpypi: For testing before production
+#    - pypi: For production release
+# 4. Click "Run workflow"
+```
+
+#### Testing on TestPyPI
+```bash
+# Install from TestPyPI
+uv pip install --index-url https://test.pypi.org/simple/ \
+  --extra-index-url https://pypi.org/simple/ \
+  opensensor-enviroplus
+
+# Test the CLI
+opensensor --help
+opensensor service info
 ```
 
 ## Questions?

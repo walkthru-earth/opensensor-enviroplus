@@ -1,0 +1,171 @@
+# GitHub Actions workflow for publishing to PyPI using Trusted Publishers
+# Latest best practice (2025) - no API tokens needed!
+#
+# References:
+# - https://docs.pypi.org/trusted-publishers/
+# - https://packaging.python.org/en/latest/guides/publishing-package-distribution-releases-using-github-actions-ci-cd-workflows/
+# - https://github.com/pypa/gh-action-pypi-publish
+# - https://docs.astral.sh/uv/guides/publish/
+
+name: Publish to PyPI 📦
+
+on:
+  # Trigger on version tags (e.g., v0.1.0, v0.2.0)
+  push:
+    tags:
+      - 'v*'
+
+  # Allow manual trigger from GitHub UI
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Publish target'
+        required: true
+        type: choice
+        options:
+          - testpypi
+          - pypi
+
+jobs:
+  build:
+    name: Build distribution 📦
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for proper versioning
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install UV
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: uv sync --all-groups
+
+      - name: Run linting checks
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+
+      - name: Build package with UV
+        run: uv build
+
+      - name: Verify build artifacts
+        run: |
+          ls -lah dist/
+          echo "📦 Built packages:"
+          ls -1 dist/
+
+      - name: Store the distribution packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-package-distributions
+          path: dist/
+          retention-days: 7
+
+  publish-to-testpypi:
+    name: Publish to TestPyPI 🧪
+    # Only run on manual trigger with testpypi target
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.target == 'testpypi'
+    needs:
+      - build
+    runs-on: ubuntu-latest
+
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/opensensor-enviroplus
+
+    permissions:
+      id-token: write  # REQUIRED for trusted publishing
+
+    steps:
+      - name: Download distribution packages
+        uses: actions/download-artifact@v4
+        with:
+          name: python-package-distributions
+          path: dist/
+
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          print-hash: true
+          verbose: true
+
+  publish-to-pypi:
+    name: Publish to PyPI 🚀
+    # Run on tag pushes OR manual trigger with pypi target
+    if: >
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.target == 'pypi')
+    needs:
+      - build
+    runs-on: ubuntu-latest
+
+    environment:
+      name: pypi
+      url: https://pypi.org/p/opensensor-enviroplus
+
+    permissions:
+      id-token: write  # REQUIRED for trusted publishing
+      contents: write  # REQUIRED for creating GitHub releases
+
+    steps:
+      - name: Download distribution packages
+        uses: actions/download-artifact@v4
+        with:
+          name: python-package-distributions
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          print-hash: true
+          verbose: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/v')
+        with:
+          files: dist/*
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+
+  verify-publication:
+    name: Verify Publication ✅
+    needs:
+      - publish-to-pypi
+    if: success()
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Wait for PyPI to process
+        run: sleep 60
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install UV
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Try installing published package
+        run: |
+          uv venv test-env
+          source test-env/bin/activate
+          uv pip install opensensor-enviroplus
+          opensensor --help
+          opensensor service --help
+          echo "✅ Package installed and commands work!"

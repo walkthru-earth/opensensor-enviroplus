@@ -105,16 +105,10 @@ opensensor --help
 
 ## 🧪 Testing from TestPyPI
 
-After publishing to TestPyPI, you can test the package using `uvx` (one-shot run without permanent install):
+After publishing to TestPyPI, test the package with traditional install:
 
 ```bash
-# Run directly from TestPyPI (recommended - no installation needed)
-uvx --index https://test.pypi.org/simple \
-    --index https://pypi.org/simple \
-    --index-strategy unsafe-best-match \
-    opensensor-enviroplus --help
-
-# Or install in a virtual environment for testing
+# Install from TestPyPI (recommended for pre-release testing)
 uv pip install --index-url https://test.pypi.org/simple/ \
   --extra-index-url https://pypi.org/simple/ \
   opensensor-enviroplus
@@ -125,10 +119,12 @@ opensensor service --help
 opensensor service info
 ```
 
-**Why multiple `--index` flags?**
-- First `--index`: TestPyPI (our package)
-- Second `--index`: PyPI (dependencies like polars, typer, etc.)
-- `--index-strategy unsafe-best-match`: Allow UV to search all indexes
+**Note:** `uvx` with mixed indexes (TestPyPI + PyPI) may encounter dependency resolution issues. Use traditional `uv pip install` for TestPyPI testing. Once published to production PyPI, `uvx opensensor-enviroplus --help` works perfectly.
+
+**Why two index URLs?**
+- `--index-url`: TestPyPI (our package)
+- `--extra-index-url`: PyPI (dependencies like polars, typer, obstore)
+- TestPyPI doesn't mirror all PyPI packages
 
 ## 🧪 Pre-Release Checklist
 
@@ -140,7 +136,7 @@ Before creating a release, verify:
 - [ ] All tests pass: `uv run opensensor --help && uv run opensensor service --help`
 - [ ] Documentation is up to date
 - [ ] Local build works: `uv build`
-- [ ] TestPyPI installation works: `uvx --index https://test.pypi.org/simple --index https://pypi.org/simple --index-strategy unsafe-best-match opensensor-enviroplus --help`
+- [ ] TestPyPI installation works: `uv pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ opensensor-enviroplus && opensensor --help`
 
 ## 📋 Version Numbering
 
@@ -163,13 +159,17 @@ Follow [Semantic Versioning](https://semver.org/):
 # View package page
 open https://pypi.org/project/opensensor-enviroplus/
 
-# Install from PyPI
-uv pip install opensensor-enviroplus
+# Option 1: Run with uvx (no installation needed)
+uvx opensensor-enviroplus --help
+uvx opensensor-enviroplus service info
 
-# Test CLI commands
+# Option 2: Traditional install
+uv pip install opensensor-enviroplus
 opensensor --help
 opensensor service info
 ```
+
+**Note:** `uvx` works perfectly from production PyPI! It's the recommended way for users to try the CLI without permanent installation.
 
 ### Check GitHub Release
 ```bash

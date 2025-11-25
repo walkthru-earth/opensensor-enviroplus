@@ -205,6 +205,7 @@ flowchart LR
 graph TB
     subgraph "Raspberry Pi Zero W"
         OS[Ubuntu 24.04 ARM64]
+        Systemd[systemd Service Manager]
         Python[Python 3.10+ with UV]
         App[opensensor service]
         Storage[Local Storage<br/>SD Card]
@@ -222,7 +223,8 @@ graph TB
         S3[S3 Bucket]
     end
 
-    OS --> Python
+    OS --> Systemd
+    Systemd --> Python
     Python --> App
     Sensors --> App
     App --> Storage
@@ -230,6 +232,7 @@ graph TB
     WiFi --> S3
 
     style App fill:#e1f5ff
+    style Systemd fill:#e1ffe1
     style Storage fill:#ffe1f5
     style S3 fill:#fff5e1
 ```
@@ -239,6 +242,12 @@ graph TB
 - Enviro+ HAT with sensors
 - 16GB+ SD card
 - WiFi connectivity
+
+**Software Deployment:**
+- Runs as systemd service (auto-start on boot)
+- Automatic restarts on failure
+- Managed via CLI commands
+- Logs via journalctl
 
 ### Multi-Station Network
 
@@ -539,6 +548,67 @@ ORDER BY hour;
 
 ---
 
+## Service Deployment
+
+### Systemd Service Management
+
+The application runs as a systemd service for production deployment:
+
+**Service Features:**
+- **Auto-start**: Starts on boot automatically
+- **Auto-restart**: Restarts on failure (10s delay)
+- **Security**: Sandboxed with systemd security features
+- **Logging**: Integrated with journald
+- **Management**: Simple CLI commands
+
+**Quick Setup:**
+```bash
+# One-command setup (install + enable + start)
+sudo opensensor service setup
+
+# View status
+sudo opensensor service status
+
+# View logs
+sudo opensensor service logs --follow
+```
+
+**Service Architecture:**
+```mermaid
+graph LR
+    CLI[opensensor CLI] --> ServiceManager[Service Manager<br/>Auto-detection]
+    ServiceManager --> Systemd[systemd]
+    Systemd --> Service[opensensor.service]
+    Service --> Collector[Data Collector]
+
+    ServiceManager -.Detects.-> Paths[User, Paths<br/>Venv, Python]
+
+    style ServiceManager fill:#e1f5ff
+    style Systemd fill:#e1ffe1
+    style Collector fill:#ffe1f5
+```
+
+**Service Commands:**
+- `install` - Create systemd service
+- `enable` - Enable on boot
+- `start` - Start service
+- `stop` - Stop service
+- `restart` - Restart service
+- `status` - View status
+- `logs` - View logs
+- `setup` - Quick install+enable+start
+- `remove` - Complete removal
+
+**Auto-Detection:**
+The service manager automatically detects:
+- Current user (works with any username)
+- Project root directory
+- Virtual environment path
+- Python executable path
+- All required configuration
+
+---
+
 ## Configuration
 
 **Environment Variables** (`.env` file):
@@ -581,5 +651,20 @@ OPENSENSOR_LOG_LEVEL=INFO
 
 ---
 
-**Last Updated**: 2025-11-24
-**Version**: 1.1
+**Last Updated**: 2025-11-25
+**Version**: 1.2
+
+## Recent Updates (v1.2)
+
+**Service Management** (2025-11-25):
+- Added systemd service integration
+- Smart auto-detection of user, paths, and environment
+- 12 CLI service commands for complete lifecycle management
+- Security hardening with systemd features
+- Automatic restart on failure
+
+**CI/CD Pipeline** (2025-11-25):
+- GitHub Actions workflows (CI, Lint, Release)
+- Multi-Python testing (3.10, 3.11, 3.12, 3.13)
+- Automated PyPI publishing with trusted publishing
+- Pre-commit hooks with Ruff v0.14.6

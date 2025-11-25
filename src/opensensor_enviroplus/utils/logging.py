@@ -16,6 +16,21 @@ install_rich_traceback(show_locals=True)
 console = Console()
 
 
+class SafeFileHandler(logging.FileHandler):
+    """FileHandler that ensures the log directory exists before every write."""
+
+    def emit(self, record):
+        """Emit a record, ensuring the log directory exists first."""
+        try:
+            # Ensure log directory exists before writing
+            log_dir = Path(self.baseFilename).parent
+            log_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            # If directory creation fails, let the parent handler deal with it
+            pass
+        super().emit(record)
+
+
 def setup_logging(
     level: str = "INFO", log_file: Path | None = None, json_format: bool = False
 ) -> logging.Logger:
@@ -52,7 +67,8 @@ def setup_logging(
             # TODO: Add structured JSON logging
             pass
         else:
-            file_handler = logging.FileHandler(log_file)
+            # Use SafeFileHandler that recreates the log directory if deleted
+            file_handler = SafeFileHandler(log_file)
             file_handler.setLevel(logging.DEBUG)
             file_formatter = logging.Formatter(
                 "%(asctime)s - %(name)s - %(levelname)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S"

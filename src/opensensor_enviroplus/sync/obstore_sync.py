@@ -162,11 +162,12 @@ class ObstoreSync:
 
         try:
             # List all remote files with metadata
-            # obstore returns: {'path': str, 'size': int, 'last_modified': datetime, ...}
-            remote_objects = list(self.store.list())
-
-            # Build cache: {path: metadata}
-            self.remote_cache = {obj["path"]: obj for obj in remote_objects}
+            # obstore.list() returns a stream of batches, each batch is a list of ObjectMeta
+            # ObjectMeta: {'path': str, 'size': int, 'last_modified': datetime, 'e_tag': str, ...}
+            self.remote_cache = {}
+            for batch in self.store.list():
+                for obj in batch:
+                    self.remote_cache[obj["path"]] = obj
 
             # Back online if we were offline
             if self.is_offline:

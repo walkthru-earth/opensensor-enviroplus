@@ -254,7 +254,11 @@ def config():
     env_file = Path(".env")
 
     if not env_file.exists():
-        console.print("[red]ERROR: Configuration not found. Run 'opensensor setup' first.[/red]")
+        console.print("[yellow]WARNING: Configuration not found.[/yellow]")
+        console.print("\n[dim]To configure, either:[/dim]")
+        console.print("  1. Run: [cyan]uv run opensensor setup[/cyan]")
+        console.print("  2. Create a .env file manually with at minimum:")
+        console.print("     [cyan]OPENSENSOR_STATION_ID=<your-uuid-v7>[/cyan]\n")
         sys.exit(1)
 
     console.print("\n[bold blue]Current Configuration[/bold blue]\n")
@@ -280,33 +284,47 @@ def status():
     """
     console.print("\n[bold blue]OpenSensor Status[/bold blue]\n")
 
+    # Try to get output directory from config, fallback to default
     try:
         sensor_config = SensorConfig()
-
-        # Check output directory
         output_dir = sensor_config.output_dir
-        if output_dir.exists():
-            # Count files
-            parquet_files = list(output_dir.rglob("*.parquet"))
-            console.print(f"Output directory: [cyan]{output_dir}[/cyan]")
-            console.print(f"Parquet files: [green]{len(parquet_files)}[/green]")
+    except Exception:
+        output_dir = Path("output")
 
-            # Calculate total size
-            total_size = sum(f.stat().st_size for f in parquet_files)
-            size_mb = total_size / (1024 * 1024)
-            console.print(f"Total size: [green]{size_mb:.2f} MB[/green]")
-        else:
-            console.print(f"[yellow]WARNING:  Output directory not found: {output_dir}[/yellow]")
+    # Check output directory
+    if output_dir.exists():
+        # Count files
+        parquet_files = list(output_dir.rglob("*.parquet"))
+        console.print(f"Output directory: [cyan]{output_dir}[/cyan]")
+        console.print(f"Parquet files: [green]{len(parquet_files)}[/green]")
 
-        # Check logs
+        # Calculate total size
+        total_size = sum(f.stat().st_size for f in parquet_files)
+        size_mb = total_size / (1024 * 1024)
+        console.print(f"Total size: [green]{size_mb:.2f} MB[/green]")
+    else:
+        console.print(f"[dim]Output directory: {output_dir} (not created yet)[/dim]")
+
+    # Try to get log path from config, fallback to default
+    try:
+        app_config = AppConfig()
+        log_file = app_config.log_dir / "opensensor.log"
+    except Exception:
         log_file = Path("logs/opensensor.log")
-        if log_file.exists():
-            console.print(f"\nLog file: [cyan]{log_file}[/cyan]")
-            console.print(f"Log size: [green]{log_file.stat().st_size / 1024:.1f} KB[/green]")
 
-    except FileNotFoundError:
-        console.print("[red]ERROR: Configuration not found. Run 'opensensor setup' first.[/red]")
-        sys.exit(1)
+    if log_file.exists():
+        console.print(f"\nLog file: [cyan]{log_file}[/cyan]")
+        console.print(f"Log size: [green]{log_file.stat().st_size / 1024:.1f} KB[/green]")
+    else:
+        console.print(f"\n[dim]Log file: {log_file} (not created yet)[/dim]")
+
+    # Check if config exists
+    env_file = Path(".env")
+    if not env_file.exists():
+        console.print("\n[yellow]WARNING: No .env configuration found.[/yellow]")
+        console.print("[dim]To configure, either:[/dim]")
+        console.print("  1. Run: [cyan]uv run opensensor setup[/cyan]")
+        console.print("  2. Create a .env file manually with OPENSENSOR_STATION_ID")
 
     console.print()
 
@@ -319,12 +337,22 @@ def logs(
     """
     View collector logs.
     """
-    log_file = Path("logs/opensensor.log")
+    # Try to get log path from config, fallback to default
+    try:
+        app_config = AppConfig()
+        log_file = app_config.log_dir / "opensensor.log"
+    except Exception:
+        log_file = Path("logs/opensensor.log")
 
     if not log_file.exists():
+        # Create log directory if it doesn't exist
+        log_file.parent.mkdir(parents=True, exist_ok=True)
         console.print(
             "[yellow]WARNING:  No log file found. Collector may not have run yet.[/yellow]"
         )
+        console.print(f"[dim]Expected log location: {log_file}[/dim]")
+        console.print("\n[dim]To start the collector, run:[/dim]")
+        console.print("  [cyan]uv run opensensor start[/cyan]\n")
         sys.exit(1)
 
     if follow:

@@ -44,7 +44,7 @@ url = "https://test.pypi.org/simple"
 explicit = true
 
 [tool.uv.sources]
-enviroplus-community = { index = "testpypi" }
+enviroplus-community = { git = "https://github.com/walkthru-earth/enviroplus-python", branch = "main" }
 
 [dependency-groups]
 dev = [

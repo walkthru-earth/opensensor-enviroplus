@@ -54,8 +54,11 @@ After installing pre-commit hooks (`uv run pre-commit install`), Ruff will autom
 # Install hooks (one-time setup)
 uv run pre-commit install
 
-# Run manually on all files
+# Run manually on all files (using project dependency)
 uv run pre-commit run --all-files
+
+# Run manually using uvx (no installation needed)
+uvx pre-commit run --all-files
 
 # Skip hooks if needed (not recommended)
 git commit --no-verify

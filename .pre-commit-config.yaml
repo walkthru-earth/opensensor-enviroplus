@@ -1,6 +1,6 @@
 # Pre-commit hooks for code quality
-# Install: uv pip install pre-commit && pre-commit install
-# Run manually: pre-commit run --all-files
+# Run using uvx (no install needed): uvx pre-commit run --all-files
+# Or install locally: uv tool install pre-commit && pre-commit install
 
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit

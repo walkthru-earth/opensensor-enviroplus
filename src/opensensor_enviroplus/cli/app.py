@@ -3,9 +3,9 @@ Modern CLI for opensensor-enviroplus using Typer.
 Replaces bash scripts with simple Python commands.
 """
 
+import importlib.metadata
 import sys
 from pathlib import Path
-import importlib.metadata
 
 import typer
 from rich.console import Console

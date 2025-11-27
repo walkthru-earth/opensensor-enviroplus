@@ -164,8 +164,8 @@ jobs:
       - name: Try installing published package
         run: |
           # Test with uvx (one-shot run)
-          uvx opensensor-enviroplus --help
-          uvx opensensor-enviroplus service --help
+          uvx --from opensensor-enviroplus opensensor --help
+          uvx --from opensensor-enviroplus opensensor service --help
 
           # Test traditional install
           uv venv test-env

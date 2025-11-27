@@ -3,12 +3,19 @@ name = "opensensor-enviroplus"
 version = "0.2.0"
 description = "Modern CLI-based environmental sensor collector using Polars, Arrow, and Delta Lake for Enviro+"
 readme = "README.md"
-authors = [
-    { name = "Youssef Harby", email = "yharby@walkthru.earth" }
-]
+authors = [{ name = "Youssef Harby", email = "yharby@walkthru.earth" }]
 license = { text = "MIT" }
 requires-python = ">=3.10"
-keywords = ["sensors", "enviroplus", "raspberry-pi", "polars", "arrow", "iot", "opensensor-space", "walkthru-earth"]
+keywords = [
+    "sensors",
+    "enviroplus",
+    "raspberry-pi",
+    "polars",
+    "arrow",
+    "iot",
+    "opensensor-space",
+    "walkthru-earth",
+]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -20,7 +27,7 @@ classifiers = [
 ]
 dependencies = [
     "croniter>=6.0.0",
-    "enviroplus-community>=1.0.3",
+    "enviroplus-community>=1.0.5",
     "obstore>=0.8.2",
     "polars>=1.35.2",
     "pyarrow>=22.0.0",
@@ -38,19 +45,8 @@ opensensor = "opensensor_enviroplus.cli.app:app"
 [tool.uv]
 package = true
 
-[[tool.uv.index]]
-name = "testpypi"
-url = "https://test.pypi.org/simple"
-explicit = true
-
-[tool.uv.sources]
-enviroplus-community = { git = "https://github.com/walkthru-earth/enviroplus-python", branch = "main" }
-
 [dependency-groups]
-dev = [
-    "pre-commit>=4.0.1",
-    "ruff>=0.14.6",
-]
+dev = ["pre-commit>=4.0.1", "ruff>=0.14.6"]
 
 [tool.ruff]
 line-length = 100
@@ -58,19 +54,19 @@ target-version = "py310"
 
 [tool.ruff.lint]
 select = [
-    "E",      # pycodestyle errors
-    "W",      # pycodestyle warnings
-    "F",      # pyflakes
-    "I",      # isort
-    "UP",     # pyupgrade
-    "B",      # flake8-bugbear
-    "C4",     # flake8-comprehensions
-    "PTH",    # flake8-use-pathlib
-    "SIM",    # flake8-simplify
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "PTH", # flake8-use-pathlib
+    "SIM", # flake8-simplify
 ]
 ignore = [
-    "E501",   # line too long (handled by formatter)
-    "B008",   # function call in argument defaults (typer pattern)
+    "E501", # line too long (handled by formatter)
+    "B008", # function call in argument defaults (typer pattern)
 ]
 
 [tool.ruff.format]

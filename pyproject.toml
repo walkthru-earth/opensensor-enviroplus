@@ -27,7 +27,7 @@ classifiers = [
 ]
 dependencies = [
     "croniter>=6.0.0",
-    "enviroplus-community>=1.0.5",
+    "enviroplus-community>=1.0.6",
     "obstore>=0.8.2",
     "polars>=1.35.2",
     "pyarrow>=22.0.0",

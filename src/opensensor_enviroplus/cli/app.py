@@ -53,16 +53,32 @@ def setup(
     console.print("[bold]Setup Configuration[/bold]\n")
 
     # Generate or use provided station ID
-    if not station_id:
-        station_id = generate_station_id()
-        console.print(f"Generated station UUID v7: [green]{station_id}[/green]")
-        console.print("[dim](Time-ordered UUID for better database performance)[/dim]")
-    else:
+    # Generate or use provided station ID
+    if station_id:
         # Validate provided station ID
         if not validate_station_id(station_id):
             console.print("[red]ERROR: Invalid UUID format[/red]")
             raise typer.Exit(1)
-        console.print(f"Using station UUID: [green]{station_id}[/green]")
+        console.print(f"Using provided station UUID: [green]{station_id}[/green]")
+    else:
+        # Interactive mode: ask user
+        if interactive:
+            use_existing = typer.confirm("Do you have an existing station UUID?", default=False)
+            if use_existing:
+                while True:
+                    station_id = typer.prompt("Enter your station UUID")
+                    if validate_station_id(station_id):
+                        break
+                    console.print("[red]Invalid UUID format. Please try again.[/red]")
+                console.print(f"Using existing station UUID: [green]{station_id}[/green]")
+            else:
+                station_id = generate_station_id()
+                console.print(f"Generated new station UUID v7: [green]{station_id}[/green]")
+                console.print("[dim](Time-ordered UUID for better database performance)[/dim]")
+        else:
+            # Non-interactive: auto-generate
+            station_id = generate_station_id()
+            console.print(f"Generated station UUID v7: [green]{station_id}[/green]")
 
     # Create .env file
     env_file = Path(".env")

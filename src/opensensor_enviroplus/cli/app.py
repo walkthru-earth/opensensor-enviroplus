@@ -5,6 +5,7 @@ Replaces bash scripts with simple Python commands.
 
 import sys
 from pathlib import Path
+import importlib.metadata
 
 import typer
 from rich.console import Console
@@ -376,9 +377,14 @@ def version():
     Show version information.
     """
     print_banner()
-    console.print("Version: [green]0.1.0[/green]")
-    console.print("Stack: Polars, PyArrow, Delta Lake, obstore")
-    console.print("Website: [cyan]https://opensensor.space[/cyan]\n")
+    try:
+        package_version = importlib.metadata.version("opensensor-enviroplus")
+    except importlib.metadata.PackageNotFoundError:
+        package_version = "unknown"
+
+    console.print(f"Version: [green]{package_version}[/green]")
+    console.print("Website: [cyan]https://opensensor.space[/cyan]")
+    console.print("A walkthru.earth initiative\n")
 
 
 # Service management subcommand group

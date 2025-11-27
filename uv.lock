@@ -81,8 +81,8 @@ wheels = [
 
 [[package]]
 name = "enviroplus-community"
-version = "1.0.3"
-source = { registry = "https://test.pypi.org/simple" }
+version = "1.0.6"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "ads1015" },
     { name = "gpiod" },
@@ -92,9 +92,9 @@ dependencies = [
     { name = "pms5003" },
     { name = "st7735" },
 ]
-sdist = { url = "https://test-files.pythonhosted.org/packages/c5/62/462250f04c4345e40c97dc4ab47d69b30a6de7b9b5011e9ff22ffaa98b4e/enviroplus_community-1.0.3.tar.gz", hash = "sha256:58b4d836c45fab817a36ac1f80a4f19937f07ccb83dea07a9e8e26c940469a8c", size = 274285, upload-time = "2025-11-23T22:41:38.309Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/8b/c4/8b85868a3b99b305a2c1b2733021c5f0e1df28df17b6d662627447331f06/enviroplus_community-1.0.6.tar.gz", hash = "sha256:0da399e0404a249a636ebb28b9bb3427095b28f20d9c9711ecae4fdb184461c2", size = 275255, upload-time = "2025-11-27T18:07:46.779Z" }
 wheels = [
-    { url = "https://test-files.pythonhosted.org/packages/29/73/1e8709ebc3c47157513b723d87ed1e74bdd24ce881f4e9548b9a454e9cf1/enviroplus_community-1.0.3-py3-none-any.whl", hash = "sha256:a5860958da714716247bb609048a3339374a380bfdb9965a87a8ba9601e77f05", size = 76925, upload-time = "2025-11-23T22:41:35.954Z" },
+    { url = "https://files.pythonhosted.org/packages/4e/46/727a01b26a041c792d1f293b251d0c8b5852479de7b2010ba97094fed8bf/enviroplus_community-1.0.6-py3-none-any.whl", hash = "sha256:d72367111db52ea2b001fe0cab5ba514e0d5d10d6b8e7249beb812eeefdc9766", size = 77753, upload-time = "2025-11-27T18:07:45.206Z" },
 ]
 
 [[package]]
@@ -472,7 +472,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "croniter", specifier = ">=6.0.0" },
-    { name = "enviroplus-community", specifier = ">=1.0.3", index = "https://test.pypi.org/simple" },
+    { name = "enviroplus-community", specifier = ">=1.0.6" },
     { name = "obstore", specifier = ">=0.8.2" },
     { name = "polars", specifier = ">=1.35.2" },
     { name = "pyarrow", specifier = ">=22.0.0" },
@@ -626,7 +626,7 @@ wheels = [
 
 [[package]]
 name = "pydantic"
-version = "2.12.4"
+version = "2.12.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "annotated-types" },
@@ -634,9 +634,9 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "typing-inspection" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/96/ad/a17bc283d7d81837c061c49e3eaa27a45991759a1b7eae1031921c6bd924/pydantic-2.12.4.tar.gz", hash = "sha256:0f8cb9555000a4b5b617f66bfd2566264c4984b27589d3b845685983e8ea85ac", size = 821038, upload-time = "2025-11-05T10:50:08.59Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/69/44/36f1a6e523abc58ae5f928898e4aca2e0ea509b5aa6f6f392a5d882be928/pydantic-2.12.5.tar.gz", hash = "sha256:4d351024c75c0f085a9febbb665ce8c0c6ec5d30e903bdb6394b7ede26aebb49", size = 821591, upload-time = "2025-11-26T15:11:46.471Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/82/2f/e68750da9b04856e2a7ec56fc6f034a5a79775e9b9a81882252789873798/pydantic-2.12.4-py3-none-any.whl", hash = "sha256:92d3d202a745d46f9be6df459ac5a064fdaa3c1c4cd8adcfa332ccf3c05f871e", size = 463400, upload-time = "2025-11-05T10:50:06.732Z" },
+    { url = "https://files.pythonhosted.org/packages/5a/87/b70ad306ebb6f9b585f114d0ac2137d792b48be34d732d60e597c2f8465a/pydantic-2.12.5-py3-none-any.whl", hash = "sha256:e561593fccf61e8a20fc46dfc2dfe075b8be7d0188df33f221ad1f0139180f9d", size = 463580, upload-time = "2025-11-26T15:11:44.605Z" },
 ]
 
 [[package]]

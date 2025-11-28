@@ -28,7 +28,7 @@ Part of the [OpenSensor.Space](https://opensensor.space) network for open enviro
 sudo apt-get update
 
 # Install git and required system libraries
-sudo apt-get install -y git python3-cffi libportaudio2
+sudo apt-get install -y git python3-dev python3-cffi libportaudio2
 
 # Enable I2C and SPI interfaces (required for sensors)
 sudo raspi-config nonint do_i2c 0
@@ -58,11 +58,17 @@ source .venv/bin/activate
 ### Setup
 
 ```bash
+# Fix serial port permissions for PMS5003 sensor (requires reboot after)
+sudo opensensor fix-permissions
+
 # Interactive setup (creates .env configuration)
 opensensor setup
 
 # Or non-interactive
 opensensor setup --station-id "01234567-89ab-cdef-0123-456789abcdef" --no-interactive
+
+# Test sensors with warm-up delay and table output
+opensensor test-sensors
 ```
 
 ### Usage
@@ -100,6 +106,9 @@ opensensor start
 # Run in foreground (for debugging)
 opensensor start --foreground
 
+# Test sensors with warm-up and table output
+opensensor test-sensors --warmup 5 --readings 3
+
 # View status
 opensensor status
 
@@ -114,6 +123,9 @@ opensensor logs --follow
 
 # View configuration
 opensensor config
+
+# Fix sensor permissions (requires sudo, then reboot)
+sudo opensensor fix-permissions
 ```
 
 #### Service Management
@@ -271,7 +283,10 @@ MIT License - see [LICENSE](LICENSE) file for details
 Built by the [WalkThru Earth](https://walkthru.earth) team for the [OpenSensor.Space](https://opensensor.space) network.
 
 **Dependencies:**
-- [enviroplus-community](https://github.com/walkthru-earth/enviroplus-python) - Enviro+ sensor drivers
+- [pimoroni-bme280](https://github.com/pimoroni/bme280-python) - Temperature, pressure, humidity sensor
+- [pms5003](https://github.com/pimoroni/pms5003-python) - Particulate matter sensor
+- [ltr559](https://github.com/pimoroni/ltr559-python) - Light and proximity sensor
+- [ads1015](https://github.com/pimoroni/ads1015-python) - ADC for MICS6814 gas sensor
 - [Polars](https://pola.rs/) - Lightning-fast DataFrames
 - [obstore](https://developmentseed.org/obstore/) - Object storage abstraction
 - [Typer](https://typer.tiangolo.com/) - CLI framework

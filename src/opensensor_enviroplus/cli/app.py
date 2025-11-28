@@ -389,6 +389,293 @@ def version():
     console.print("A walkthru.earth initiative\n")
 
 
+@app.command("fix-permissions")
+def fix_permissions():
+    """
+    Fix serial port permissions for PMS5003 sensor.
+
+    This command requires sudo and will:
+    - Add current user to dialout, i2c, and gpio groups
+    - Create udev rule for /dev/ttyAMA0 serial port access
+    - Reload udev rules
+
+    A reboot is required after running this command.
+    """
+    import grp
+    import os
+    import subprocess
+
+    print_banner()
+    console.print("[bold]Fixing sensor permissions...[/bold]\n")
+
+    # Check if running as root
+    if os.geteuid() != 0:
+        console.print("[red]ERROR: This command requires sudo.[/red]")
+        console.print("\nRun: [cyan]sudo opensensor fix-permissions[/cyan]\n")
+        sys.exit(1)
+
+    # Get the actual user (not root)
+    user = os.environ.get("SUDO_USER") or os.environ.get("USER")
+    if not user or user == "root":
+        console.print("[red]ERROR: Could not determine actual user.[/red]")
+        console.print("Please run with sudo from a regular user account.\n")
+        sys.exit(1)
+
+    console.print(f"User: [cyan]{user}[/cyan]\n")
+
+    # Add user to required groups
+    groups = ["dialout", "i2c", "gpio"]
+    for group in groups:
+        try:
+            # Check if group exists
+            grp.getgrnam(group)
+            result = subprocess.run(
+                ["usermod", "-aG", group, user],
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode == 0:
+                console.print(f"[green]Added {user} to {group} group[/green]")
+            else:
+                console.print(
+                    f"[yellow]Warning: Could not add to {group}: {result.stderr}[/yellow]"
+                )
+        except KeyError:
+            console.print(f"[dim]Skipping {group} (group does not exist)[/dim]")
+
+    # Create udev rule for PMS5003 serial port
+    udev_rule = 'KERNEL=="ttyAMA0", GROUP="dialout", MODE="0660"'
+    udev_file = Path("/etc/udev/rules.d/99-pms5003.rules")
+
+    try:
+        udev_file.write_text(udev_rule + "\n")
+        console.print(f"\n[green]Created udev rule:[/green] {udev_file}")
+        console.print(f"  [dim]{udev_rule}[/dim]")
+    except OSError as e:
+        console.print(f"[red]ERROR: Could not create udev rule: {e}[/red]")
+        sys.exit(1)
+
+    # Reload udev rules
+    console.print("\n[dim]Reloading udev rules...[/dim]")
+    result = subprocess.run(
+        ["udevadm", "control", "--reload-rules"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode == 0:
+        console.print("[green]Udev rules reloaded[/green]")
+    else:
+        console.print(f"[yellow]Warning: {result.stderr}[/yellow]")
+
+    # Trigger udev for immediate effect (if device exists)
+    subprocess.run(
+        ["udevadm", "trigger", "--subsystem-match=tty"],
+        capture_output=True,
+    )
+
+    console.print("\n[bold green]Permissions fixed![/bold green]")
+    console.print("\n[yellow]IMPORTANT: You must reboot for group changes to take effect.[/yellow]")
+    console.print("\nRun: [cyan]sudo reboot[/cyan]\n")
+
+
+@app.command("test-sensors")
+def test_sensors(
+    warmup: int = typer.Option(3, "--warmup", "-w", help="Warm-up time in seconds before reading"),
+    readings: int = typer.Option(3, "--readings", "-r", help="Number of readings to take"),
+    interval: float = typer.Option(
+        2.0, "--interval", "-i", help="Interval between readings in seconds"
+    ),
+):
+    """
+    Test sensors with warm-up delay and display readings in a table.
+
+    Initializes all sensors, waits for warm-up, then displays
+    a formatted table with sensor readings.
+    """
+    import time
+
+    from rich.table import Table
+
+    print_banner()
+    console.print("[bold]Testing Sensors[/bold]\n")
+
+    # Try to import sensor libraries
+    try:
+        import ads1015
+        import gpiod
+        import gpiodevice
+        from bme280 import BME280
+        from gpiod.line import Direction, Value
+        from ltr559 import LTR559
+        from pms5003 import PMS5003, ReadTimeoutError
+        from smbus2 import SMBus
+    except ImportError as e:
+        console.print(f"[red]ERROR: Sensor libraries not available: {e}[/red]")
+        console.print(
+            "\n[dim]This command must be run on a Raspberry Pi with sensors connected.[/dim]\n"
+        )
+        sys.exit(1)
+
+    # Constants for gas sensor
+    MICS6814_GAIN = 6.144
+    MICS6814_I2C_ADDR = 0x49
+
+    def voltage_to_resistance(voltage: float) -> float:
+        try:
+            return (voltage * 56000) / (3.3 - voltage)
+        except ZeroDivisionError:
+            return 0.0
+
+    # Initialize sensors
+    sensors_status = {}
+
+    # BME280
+    bme280 = None
+    try:
+        bme280 = BME280(i2c_dev=SMBus(1))
+        sensors_status["BME280"] = "[green]OK[/green]"
+    except Exception as e:
+        sensors_status["BME280"] = f"[red]Failed: {e}[/red]"
+
+    # Gas sensor (ADS1015/ADS1115)
+    gas_adc = None
+    adc_type = "N/A"
+    try:
+        ads1015.I2C_ADDRESS_DEFAULT = MICS6814_I2C_ADDR
+        gas_adc = ads1015.ADS1015(i2c_addr=MICS6814_I2C_ADDR)
+        adc_type = gas_adc.detect_chip_type()
+        gas_adc.set_mode("single")
+        gas_adc.set_programmable_gain(MICS6814_GAIN)
+        if adc_type == "ADS1115":
+            gas_adc.set_sample_rate(128)
+        else:
+            gas_adc.set_sample_rate(1600)
+        # Enable heater
+        outh = gpiod.LineSettings(direction=Direction.OUTPUT, output_value=Value.ACTIVE)
+        gpiodevice.get_pin("GPIO24", "EnviroPlus", outh)
+        sensors_status["MICS6814"] = f"[green]OK ({adc_type})[/green]"
+    except Exception as e:
+        sensors_status["MICS6814"] = f"[red]Failed: {e}[/red]"
+
+    # LTR559
+    ltr559 = None
+    try:
+        ltr559 = LTR559()
+        sensors_status["LTR559"] = "[green]OK[/green]"
+    except Exception as e:
+        sensors_status["LTR559"] = f"[red]Failed: {e}[/red]"
+
+    # PMS5003
+    pms5003 = None
+    try:
+        pms5003 = PMS5003()
+        sensors_status["PMS5003"] = "[green]OK[/green]"
+    except Exception as e:
+        sensors_status["PMS5003"] = f"[red]Failed: {e}[/red]"
+
+    # Show initialization status
+    console.print("[bold]Sensor Initialization:[/bold]")
+    for sensor, status in sensors_status.items():
+        console.print(f"  {sensor}: {status}")
+
+    # Check if any sensors available
+    if not any([bme280, gas_adc, ltr559, pms5003]):
+        console.print("\n[red]ERROR: No sensors could be initialized.[/red]")
+        console.print("[dim]Check I2C/SPI interfaces and wiring.[/dim]\n")
+        sys.exit(1)
+
+    # Warm-up countdown
+    console.print(f"\n[yellow]Warming up sensors ({warmup}s)...[/yellow]")
+    for i in range(warmup, 0, -1):
+        console.print(f"  [dim]{i}...[/dim]", end="\r")
+        time.sleep(1)
+    console.print("  [green]Ready![/green]   ")
+
+    # Take readings
+    console.print(f"\n[bold]Taking {readings} readings (every {interval}s):[/bold]\n")
+
+    all_readings = []
+
+    for reading_num in range(1, readings + 1):
+        reading = {"#": reading_num}
+
+        # BME280 readings
+        if bme280:
+            try:
+                reading["Temp (°C)"] = f"{bme280.get_temperature():.1f}"
+                reading["Humidity (%)"] = f"{bme280.get_humidity():.1f}"
+                reading["Pressure (hPa)"] = f"{bme280.get_pressure():.1f}"
+            except Exception:
+                reading["Temp (°C)"] = "ERR"
+                reading["Humidity (%)"] = "ERR"
+                reading["Pressure (hPa)"] = "ERR"
+
+        # Gas sensor readings
+        if gas_adc:
+            try:
+                ox = gas_adc.get_voltage("in0/gnd")
+                red = gas_adc.get_voltage("in1/gnd")
+                nh3 = gas_adc.get_voltage("in2/gnd")
+                reading["Oxidising (kΩ)"] = f"{voltage_to_resistance(ox) / 1000:.1f}"
+                reading["Reducing (kΩ)"] = f"{voltage_to_resistance(red) / 1000:.1f}"
+                reading["NH3 (kΩ)"] = f"{voltage_to_resistance(nh3) / 1000:.1f}"
+            except Exception:
+                reading["Oxidising (kΩ)"] = "ERR"
+                reading["Reducing (kΩ)"] = "ERR"
+                reading["NH3 (kΩ)"] = "ERR"
+
+        # Light sensor readings
+        if ltr559:
+            try:
+                reading["Lux"] = f"{ltr559.get_lux():.1f}"
+                reading["Proximity"] = f"{ltr559.get_proximity()}"
+            except Exception:
+                reading["Lux"] = "ERR"
+                reading["Proximity"] = "ERR"
+
+        # Particulate sensor readings
+        if pms5003:
+            try:
+                pm = pms5003.read()
+                reading["PM1.0"] = f"{pm.pm_ug_per_m3(1.0)}"
+                reading["PM2.5"] = f"{pm.pm_ug_per_m3(2.5)}"
+                reading["PM10"] = f"{pm.pm_ug_per_m3(10)}"
+            except ReadTimeoutError:
+                reading["PM1.0"] = "TIMEOUT"
+                reading["PM2.5"] = "TIMEOUT"
+                reading["PM10"] = "TIMEOUT"
+            except Exception:
+                reading["PM1.0"] = "ERR"
+                reading["PM2.5"] = "ERR"
+                reading["PM10"] = "ERR"
+
+        all_readings.append(reading)
+
+        # Build and display table
+        table = Table(title=f"Sensor Readings ({reading_num}/{readings})")
+
+        # Add columns based on what sensors we have
+        if all_readings:
+            for col in all_readings[0]:
+                table.add_column(col, justify="right" if col != "#" else "center")
+
+            for r in all_readings:
+                table.add_row(*[str(v) for v in r.values()])
+
+        console.print(table)
+
+        if reading_num < readings:
+            time.sleep(interval)
+            # Clear previous table for next iteration (move cursor up)
+            # This creates a nice "live" effect
+            console.print()
+
+    console.print("\n[bold green]Test complete![/bold green]")
+    console.print(
+        "\nTo start continuous collection, run: [cyan]opensensor start --foreground[/cyan]\n"
+    )
+
+
 # Service management subcommand group
 service_app = typer.Typer(
     name="service",

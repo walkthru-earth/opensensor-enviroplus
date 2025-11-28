@@ -396,12 +396,15 @@ WantedBy=multi-user.target
 
         # Create required directories
         output_dir = self.env.working_directory / "output"
+        health_dir = self.env.working_directory / "output-health"
         logs_dir = self.env.working_directory / "logs"
         output_dir.mkdir(parents=True, exist_ok=True)
+        health_dir.mkdir(parents=True, exist_ok=True)
         logs_dir.mkdir(parents=True, exist_ok=True)
 
         # Set ownership
         shutil.chown(str(output_dir), user=self.env.user, group=self.env.group)
+        shutil.chown(str(health_dir), user=self.env.user, group=self.env.group)
         shutil.chown(str(logs_dir), user=self.env.user, group=self.env.group)
 
         # Generate and write service file

@@ -225,14 +225,33 @@ def setup(
     elif "OPENSENSOR_OUTPUT_DIR" not in existing_config:
         existing_config["OPENSENSOR_OUTPUT_DIR"] = "output"
 
-    # Cloud sync configuration (only in interactive mode if not already configured)
-    if (
-        interactive
-        and not existing_config.get("OPENSENSOR_SYNC_ENABLED")
-        and typer.confirm("\nEnable cloud storage sync?", default=False)
-    ):
+    # Cloud storage configuration
+    enable_sync = False
+    if interactive:
+        enable_sync = typer.confirm("\nEnable cloud storage sync?", default=False)
+    elif existing_config.get("OPENSENSOR_SYNC_ENABLED") == "true":
+        enable_sync = True
+
+    # Health monitoring configuration
+    enable_health = False
+    if interactive:
+        enable_health = typer.confirm(
+            "Enable system health monitoring (CPU, RAM, WiFi)?", default=True
+        )
+    elif existing_config.get("OPENSENSOR_HEALTH_ENABLED") == "true":
+        enable_health = True
+
+    config = {
+        "OPENSENSOR_STATION_ID": str(final_station_id),
+        "OPENSENSOR_OUTPUT_DIR": str(output_dir)
+        if output_dir
+        else existing_config.get("OPENSENSOR_OUTPUT_DIR", "output"),
+        "OPENSENSOR_HEALTH_ENABLED": str(enable_health).lower(),
+        "OPENSENSOR_SYNC_ENABLED": str(enable_sync).lower(),
+    }
+
+    if enable_sync:
         console.print("\n[bold]Cloud Storage Configuration[/bold]")
-        existing_config["OPENSENSOR_SYNC_ENABLED"] = "true"
 
         # Provider selection
         console.print("\n[dim]Supported providers:[/dim]")
@@ -247,55 +266,74 @@ def setup(
 
         provider = typer.prompt(
             "\nStorage provider",
-            default="s3",
+            default=existing_config.get("OPENSENSOR_STORAGE_PROVIDER", "s3"),
             type=click.Choice(
                 ["s3", "r2", "gcs", "azure", "minio", "wasabi", "backblaze", "hetzner"],
                 case_sensitive=False,
             ),
         ).lower()
-        existing_config["OPENSENSOR_STORAGE_PROVIDER"] = provider
+        config["OPENSENSOR_STORAGE_PROVIDER"] = provider
 
         # Common settings
-        existing_config["OPENSENSOR_STORAGE_BUCKET"] = typer.prompt("Bucket/container name")
-        existing_config["OPENSENSOR_STORAGE_PREFIX"] = typer.prompt(
-            "Prefix/path in bucket", default="sensor-data"
+        config["OPENSENSOR_STORAGE_BUCKET"] = typer.prompt(
+            "Bucket/container name", default=existing_config.get("OPENSENSOR_STORAGE_BUCKET", "")
+        )
+        config["OPENSENSOR_STORAGE_PREFIX"] = typer.prompt(
+            "Prefix/path in bucket",
+            default=existing_config.get("OPENSENSOR_STORAGE_PREFIX", "sensor-data"),
         )
 
         # Provider-specific configuration
         if provider == "gcs":
             # Google Cloud Storage
-            sa_path = typer.prompt("Service account JSON path (or press Enter for ADC)", default="")
+            sa_path = typer.prompt(
+                "Service account JSON path (or press Enter for ADC)",
+                default=existing_config.get("OPENSENSOR_GCS_SERVICE_ACCOUNT_PATH", ""),
+            )
             if sa_path:
-                existing_config["OPENSENSOR_GCS_SERVICE_ACCOUNT_PATH"] = sa_path
+                config["OPENSENSOR_GCS_SERVICE_ACCOUNT_PATH"] = sa_path
             else:
                 console.print("[dim]Using Application Default Credentials[/dim]")
 
         elif provider == "azure":
             # Azure Blob Storage
-            existing_config["OPENSENSOR_AZURE_STORAGE_ACCOUNT"] = typer.prompt(
-                "Storage account name"
+            config["OPENSENSOR_AZURE_STORAGE_ACCOUNT"] = typer.prompt(
+                "Storage account name",
+                default=existing_config.get("OPENSENSOR_AZURE_STORAGE_ACCOUNT", ""),
             )
             auth_method = typer.prompt(
                 "Auth method", type=typer.Choice(["key", "sas"]), default="key"
             )
             if auth_method == "key":
-                existing_config["OPENSENSOR_AZURE_STORAGE_KEY"] = typer.prompt(
-                    "Storage account key", hide_input=True
+                config["OPENSENSOR_AZURE_STORAGE_KEY"] = typer.prompt(
+                    "Storage account key",
+                    hide_input=True,
+                    default=existing_config.get("OPENSENSOR_AZURE_STORAGE_KEY", ""),
                 )
             else:
-                existing_config["OPENSENSOR_AZURE_SAS_TOKEN"] = typer.prompt(
-                    "SAS token", hide_input=True
+                config["OPENSENSOR_AZURE_SAS_TOKEN"] = typer.prompt(
+                    "SAS token",
+                    hide_input=True,
+                    default=existing_config.get("OPENSENSOR_AZURE_SAS_TOKEN", ""),
                 )
 
         else:
             # S3-compatible providers (s3, r2, minio, wasabi, backblaze, hetzner)
             if provider in ("wasabi", "backblaze", "hetzner"):
-                existing_config["OPENSENSOR_STORAGE_REGION"] = typer.prompt(
-                    "Region", default="us-east-1" if provider == "wasabi" else "us-west-004"
+                config["OPENSENSOR_STORAGE_REGION"] = typer.prompt(
+                    "Region",
+                    default=existing_config.get(
+                        "OPENSENSOR_STORAGE_REGION",
+                        "us-east-1" if provider == "wasabi" else "us-west-004",
+                    ),
                 )
             elif provider == "s3":
-                existing_config["OPENSENSOR_STORAGE_REGION"] = typer.prompt(
-                    "Region", default="us-west-2"
+                config["OPENSENSOR_STORAGE_REGION"] = typer.prompt(
+                    "Region", default=existing_config.get("OPENSENSOR_STORAGE_REGION", "us-west-2")
+                )
+            elif provider == "r2":
+                config["OPENSENSOR_STORAGE_REGION"] = typer.prompt(
+                    "Region", default=existing_config.get("OPENSENSOR_STORAGE_REGION", "auto")
                 )
 
             # Endpoint (required for r2, minio; optional for others)
@@ -304,24 +342,40 @@ def setup(
                     "\n[yellow]R2 endpoint format:[/yellow] "
                     "https://<account_id>.r2.cloudflarestorage.com"
                 )
-                existing_config["OPENSENSOR_STORAGE_ENDPOINT"] = typer.prompt("R2 endpoint URL")
+                config["OPENSENSOR_STORAGE_ENDPOINT"] = typer.prompt(
+                    "R2 endpoint URL",
+                    default=existing_config.get("OPENSENSOR_STORAGE_ENDPOINT", ""),
+                )
             elif provider == "minio":
-                existing_config["OPENSENSOR_STORAGE_ENDPOINT"] = typer.prompt(
-                    "MinIO endpoint URL", default="http://localhost:9000"
+                config["OPENSENSOR_STORAGE_ENDPOINT"] = typer.prompt(
+                    "MinIO endpoint URL",
+                    default=existing_config.get(
+                        "OPENSENSOR_STORAGE_ENDPOINT", "http://localhost:9000"
+                    ),
+                )
+            elif existing_config.get("OPENSENSOR_STORAGE_ENDPOINT"):
+                config["OPENSENSOR_STORAGE_ENDPOINT"] = typer.prompt(
+                    "Endpoint URL (optional)",
+                    default=existing_config.get("OPENSENSOR_STORAGE_ENDPOINT", ""),
                 )
 
             # S3-compatible credentials
-            existing_config["OPENSENSOR_AWS_ACCESS_KEY_ID"] = typer.prompt("Access Key ID")
-            existing_config["OPENSENSOR_AWS_SECRET_ACCESS_KEY"] = typer.prompt(
-                "Secret Access Key", hide_input=True
+            config["OPENSENSOR_AWS_ACCESS_KEY_ID"] = typer.prompt(
+                "Access Key ID", default=existing_config.get("OPENSENSOR_AWS_ACCESS_KEY_ID", "")
+            )
+            config["OPENSENSOR_AWS_SECRET_ACCESS_KEY"] = typer.prompt(
+                "Secret Access Key",
+                hide_input=True,
+                default=existing_config.get("OPENSENSOR_AWS_SECRET_ACCESS_KEY", ""),
             )
 
     # Write configuration
-    write_env_file(env_file, existing_config, final_station_id)
+    write_env_file(env_file, config)
     console.print(f"\nConfiguration saved to [green]{env_file}[/green]")
 
     # Create directories
-    ensure_directories(existing_config.get("OPENSENSOR_OUTPUT_DIR", "output"), "logs")
+    out_dir = config.get("OPENSENSOR_OUTPUT_DIR", "output")
+    ensure_directories(out_dir, f"{out_dir}-health", "logs")
 
     console.print("\n[bold green]Setup complete![/bold green]")
     console.print("\nNext steps:")

@@ -29,7 +29,7 @@ error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 echo ""
 echo -e "${GREEN}╔═══════════════════════════════════════════════════════════╗${NC}"
 echo -e "${GREEN}║     OpenSensor.Space Enviro+ Installer for Raspberry Pi   ║${NC}"
-echo -e "${GREEN}║             https://opensensor.space                      ║${NC}"
+echo -e "${GREEN}║               A walkthru.earth Initiative                 ║${NC}"
 echo -e "${GREEN}╚═══════════════════════════════════════════════════════════╝${NC}"
 echo ""
 
@@ -40,7 +40,7 @@ check_raspberry_pi() {
         return
     fi
 
-    model=$(cat /proc/device-tree/model 2>/dev/null || echo "Unknown")
+    model=$(tr -d '\0' < /proc/device-tree/model 2>/dev/null || echo "Unknown")
     info "Detected: $model"
 
     if [[ ! "$model" =~ "Raspberry Pi" ]]; then
@@ -70,14 +70,10 @@ install_system_deps() {
     info "Updating package lists..."
     apt-get update -qq
 
-    info "Installing system dependencies..."
-    apt-get install -y -qq \
-        git \
-        python3-dev \
-        python3-cffi \
-        libportaudio2 \
-        i2c-tools \
-        > /dev/null
+    # List packages for transparency
+    PACKAGES="git python3-dev python3-cffi libportaudio2 i2c-tools"
+    info "Installing system packages: $PACKAGES"
+    apt-get install -y -qq $PACKAGES > /dev/null
 
     success "System dependencies installed"
 }

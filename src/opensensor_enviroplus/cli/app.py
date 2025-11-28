@@ -45,7 +45,8 @@ console = Console()
 
 def print_banner():
     """Print opensensor.space branded banner."""
-    console.print("\n[bold cyan]OpenSensor.Space[/bold cyan] | Enviro+ Data Collector\n")
+    console.print("\n[bold cyan]OpenSensor.Space[/bold cyan] | Enviro+ Data Collector")
+    console.print("[dim]A walkthru.earth Initiative[/dim]\n")
 
 
 def _check_sensor_availability() -> dict[str, str]:

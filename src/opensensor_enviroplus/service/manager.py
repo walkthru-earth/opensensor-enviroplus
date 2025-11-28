@@ -22,7 +22,13 @@ class ServiceManager:
         self.project_root = self._detect_project_root()
         self.venv_path = self._detect_venv_path()
         self.python_path = self._detect_python_executable()
-        self.env_file = self.project_root / ".env"
+        self.env_file = self._detect_env_file()
+
+        # If .env found, update project_root to match its location
+        # This ensures WorkingDirectory and output paths are correct
+        if self.env_file.exists():
+            self.project_root = self.env_file.parent
+
         self.service_file = Path(f"/etc/systemd/system/{self.SERVICE_NAME}.service")
 
     def _detect_user(self) -> str:
@@ -66,8 +72,46 @@ class ServiceManager:
         if (cwd / "pyproject.toml").exists():
             return cwd
 
-        # Last resort: use the package installation directory
-        return Path(__file__).resolve().parent.parent.parent.parent
+        # Last resort: use current working directory
+        # This is important for installed packages (pip/uvx) where there is no pyproject.toml
+        return Path.cwd()
+
+    def _detect_env_file(self) -> Path:
+        """Detect configuration file location."""
+        # 1. Check current working directory
+        cwd_env = Path.cwd() / ".env"
+        if cwd_env.exists():
+            return cwd_env
+
+        # 2. Check project root (if different from cwd)
+        if self.project_root != Path.cwd():
+            root_env = self.project_root / ".env"
+            if root_env.exists():
+                return root_env
+
+        # 3. If running as sudo, check original user's home/cwd
+        if os.environ.get("SUDO_USER"):
+            try:
+                # Try to find .env in the directory where sudo was called
+                # (PWD environment variable is often preserved)
+                pwd = os.environ.get("PWD")
+                if pwd:
+                    pwd_env = Path(pwd) / ".env"
+                    if pwd_env.exists():
+                        return pwd_env
+
+                # Fallback to user's home directory
+                import pwd as pwd_module
+
+                home = Path(pwd_module.getpwnam(self.user).pw_dir)
+                user_env = home / ".env"
+                if user_env.exists():
+                    return user_env
+            except (ImportError, KeyError):
+                pass
+
+        # Default to project root .env
+        return self.project_root / ".env"
 
     def _detect_venv_path(self) -> Path:
         """Detect the virtual environment path (usually .venv in project root)."""

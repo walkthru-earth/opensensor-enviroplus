@@ -1,152 +1,220 @@
 """
-Smart systemd service manager with automatic path detection.
-Handles installation, configuration, and management of opensensor as a systemd service.
+Smart systemd service manager with fully dynamic path detection.
+
+This module handles installation, configuration, and management of opensensor
+as a systemd service. It uses only dynamic discovery methods - no hardcoded paths.
+
+Key principles:
+1. Use Python's introspection to find where we're running from
+2. Use system tools (which, uv) to discover executables
+3. Respect XDG standards and environment variables
+4. Provide clear feedback about what was detected
 """
 
 import os
+import shutil
 import subprocess
 import sys
+from dataclasses import dataclass, field
 from pathlib import Path
+
+from opensensor_enviroplus.utils.env import (
+    detect_installation_type,
+    detect_virtual_env,
+    find_env_file,
+    get_current_user,
+    get_user_group,
+    get_user_home,
+)
+
+
+@dataclass
+class ExecutableInfo:
+    """Information about a discovered executable."""
+
+    path: Path
+    exists: bool
+    source: str  # How it was discovered (e.g., "shutil.which", "sys.executable", "uv tool")
+
+    def __str__(self) -> str:
+        status = "exists" if self.exists else "NOT FOUND"
+        return f"{self.path} ({status}, via {self.source})"
+
+
+@dataclass
+class EnvironmentInfo:
+    """Dynamically detected environment information."""
+
+    # User info (from system)
+    user: str
+    group: str
+    home: Path
+
+    # Python environment
+    python_executable: Path
+    virtual_env: Path | None
+    is_venv: bool
+
+    # Package info
+    package_name: str = "opensensor-enviroplus"
+    cli_name: str = "opensensor"
+
+    # Discovered paths
+    cli_executable: ExecutableInfo | None = None
+    working_directory: Path = field(default_factory=Path.cwd)
+    env_file: Path | None = None
+
+    # Installation type detection
+    installation_type: str = "unknown"  # "venv", "uv_tool", "uvx_ephemeral", "system", "editable"
 
 
 class ServiceManager:
-    """Manages systemd service for opensensor with auto-detection of all paths."""
+    """
+    Manages systemd service for opensensor with fully dynamic path detection.
+
+    All paths are discovered at runtime using:
+    - Python introspection (sys.executable, sys.prefix, etc.)
+    - System tools (shutil.which, subprocess calls to 'uv')
+    - Environment variables (VIRTUAL_ENV, XDG_*, etc.)
+    - OS-level user/group detection
+    """
 
     SERVICE_NAME = "opensensor"
 
-    def __init__(self):
-        """Initialize service manager with auto-detected paths."""
-        # Auto-detect all paths
-        self.user = self._detect_user()
-        self.group = self._detect_group()
-        self.project_root = self._detect_project_root()
-        self.venv_path = self._detect_venv_path()
-        self.python_path = self._detect_python_executable()
-        self.env_file = self._detect_env_file()
-
-        # If .env found, update project_root to match its location
-        # This ensures WorkingDirectory and output paths are correct
-        if self.env_file.exists():
-            self.project_root = self.env_file.parent
-
+    def __init__(self) -> None:
+        """Initialize with dynamically detected environment."""
+        self.env = self._detect_environment()
         self.service_file = Path(f"/etc/systemd/system/{self.SERVICE_NAME}.service")
 
-    def _detect_user(self) -> str:
-        """Detect the actual user running the application (not root/sudo)."""
-        # If running under sudo, get the original user
-        sudo_user = os.environ.get("SUDO_USER")
-        if sudo_user:
-            return sudo_user
+        # Legacy compatibility attributes
+        self.user = self.env.user
+        self.group = self.env.group
+        self.project_root = self.env.working_directory
+        self.venv_path = self.env.virtual_env or self.env.python_executable.parent.parent
+        self.python_path = self.env.python_executable
+        self.env_file = self.env.env_file or (self.project_root / ".env")
 
-        # Otherwise use current user
-        return os.environ.get("USER", "root")
+    def _detect_environment(self) -> EnvironmentInfo:
+        """Detect the complete runtime environment dynamically."""
+        # 1. Detect user (handle sudo) - using shared utilities
+        user = get_current_user()
+        group = get_user_group(user)
+        home = get_user_home(user)
 
-    def _detect_group(self) -> str:
-        """Detect the primary group of the user."""
-        try:
-            import grp
-            import pwd
+        # 2. Detect Python environment - using shared utilities
+        python_exe = Path(sys.executable).resolve()
+        virtual_env = detect_virtual_env()
+        is_venv = virtual_env is not None
 
-            user_info = pwd.getpwnam(self.user)
-            group_info = grp.getgrgid(user_info.pw_gid)
-            return group_info.gr_name
-        except (ImportError, KeyError):
-            # Fallback to same as user
-            return self.user
+        # 3. Detect installation type - using shared utilities
+        installation_type = detect_installation_type()
 
-    def _detect_project_root(self) -> Path:
+        # 4. Find CLI executable
+        cli_executable = self._find_cli_executable(user, home)
+
+        # 5. Find working directory and env file - using shared utilities
+        working_dir, env_file = self._find_working_directory_and_env(user, home)
+
+        return EnvironmentInfo(
+            user=user,
+            group=group,
+            home=home,
+            python_executable=python_exe,
+            virtual_env=virtual_env,
+            is_venv=is_venv,
+            cli_executable=cli_executable,
+            working_directory=working_dir,
+            env_file=env_file,
+            installation_type=installation_type,
+        )
+
+    def _find_cli_executable(self, _user: str, home: Path) -> ExecutableInfo | None:
         """
-        Detect the project root directory.
-        Works by finding the directory containing pyproject.toml.
+        Find the CLI executable using multiple discovery methods.
+
+        Order of precedence:
+        1. shutil.which() - finds in PATH
+        2. uv tool dir --bin - if uv is available
+        3. Common locations based on detected environment
         """
-        # Start from the current file's directory
-        current = Path(__file__).resolve()
+        cli_name = "opensensor"
 
-        # Walk up the directory tree
-        for parent in [current] + list(current.parents):
-            if (parent / "pyproject.toml").exists():
-                return parent
+        # Method 1: Use shutil.which (most reliable - respects PATH)
+        which_result = shutil.which(cli_name)
+        if which_result:
+            path = Path(which_result).resolve()
+            return ExecutableInfo(path=path, exists=path.exists(), source="PATH (shutil.which)")
 
-        # Fallback: use current working directory
-        cwd = Path.cwd()
-        if (cwd / "pyproject.toml").exists():
-            return cwd
+        # Method 2: Try uv tool dir --bin if uv is available
+        uv_bin_dir = self._get_uv_tool_bin_dir()
+        if uv_bin_dir:
+            uv_cli = uv_bin_dir / cli_name
+            if uv_cli.exists():
+                return ExecutableInfo(path=uv_cli, exists=True, source="uv tool dir --bin")
 
-        # Last resort: use current working directory
-        # This is important for installed packages (pip/uvx) where there is no pyproject.toml
-        return Path.cwd()
-
-    def _detect_env_file(self) -> Path:
-        """Detect configuration file location."""
-        # 1. Check current working directory
-        cwd_env = Path.cwd() / ".env"
-        if cwd_env.exists():
-            return cwd_env
-
-        # 2. Check project root (if different from cwd)
-        if self.project_root != Path.cwd():
-            root_env = self.project_root / ".env"
-            if root_env.exists():
-                return root_env
-
-        # 3. If running as sudo, check original user's home/cwd
-        if os.environ.get("SUDO_USER"):
-            try:
-                # Try to find .env in the directory where sudo was called
-                # (PWD environment variable is often preserved)
-                pwd = os.environ.get("PWD")
-                if pwd:
-                    pwd_env = Path(pwd) / ".env"
-                    if pwd_env.exists():
-                        return pwd_env
-
-                # Fallback to user's home directory
-                import pwd as pwd_module
-
-                home = Path(pwd_module.getpwnam(self.user).pw_dir)
-                user_env = home / ".env"
-                if user_env.exists():
-                    return user_env
-            except (ImportError, KeyError):
-                pass
-
-        # Default to project root .env
-        return self.project_root / ".env"
-
-    def _detect_venv_path(self) -> Path:
-        """Detect the virtual environment path (usually .venv in project root)."""
-        # Check if we're running in a virtual environment
-        venv = os.environ.get("VIRTUAL_ENV")
+        # Method 3: Check virtual environment bin (if in venv)
+        venv = detect_virtual_env()
         if venv:
-            return Path(venv)
+            venv_cli = venv / "bin" / cli_name
+            if venv_cli.exists():
+                return ExecutableInfo(path=venv_cli, exists=True, source="VIRTUAL_ENV/bin")
 
-        # Check for .venv in project root
-        venv_path = self.project_root / ".venv"
-        if venv_path.exists():
-            return venv_path
+        # Method 4: Check same directory as Python executable
+        python_bin_dir = Path(sys.executable).parent
+        sibling_cli = python_bin_dir / cli_name
+        if sibling_cli.exists():
+            return ExecutableInfo(path=sibling_cli, exists=True, source="sys.executable sibling")
 
-        # Check for venv in project root
-        venv_path = self.project_root / "venv"
-        if venv_path.exists():
-            return venv_path
+        # Method 5: XDG bin directory (common for user installs)
+        xdg_bin = self._get_xdg_bin_dir(home)
+        if xdg_bin:
+            xdg_cli = xdg_bin / cli_name
+            if xdg_cli.exists():
+                return ExecutableInfo(path=xdg_cli, exists=True, source="XDG_BIN_HOME")
 
-        # Fallback: assume .venv
-        return self.project_root / ".venv"
+        # Not found - return None with diagnostic info
+        return None
 
-    def _detect_python_executable(self) -> Path:
-        """Detect the Python executable in the virtual environment."""
-        python_path = self.venv_path / "bin" / "python"
+    def _get_uv_tool_bin_dir(self) -> Path | None:
+        """Get uv's tool bin directory by running 'uv tool dir --bin'."""
+        try:
+            result = subprocess.run(
+                ["uv", "tool", "dir", "--bin"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0:
+                return Path(result.stdout.strip())
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+            pass
+        return None
 
-        if python_path.exists():
-            return python_path
+    def _get_xdg_bin_dir(self, home: Path) -> Path | None:
+        """Get the XDG bin directory."""
+        # Check environment variables in order of precedence
+        if xdg_bin := os.environ.get("UV_TOOL_BIN_DIR"):
+            return Path(xdg_bin)
+        if xdg_bin := os.environ.get("XDG_BIN_HOME"):
+            return Path(xdg_bin)
+        if xdg_data := os.environ.get("XDG_DATA_HOME"):
+            return Path(xdg_data).parent / "bin"
+        # Default XDG location
+        return home / ".local" / "bin"
 
-        # Fallback to python3
-        python_path = self.venv_path / "bin" / "python3"
-        if python_path.exists():
-            return python_path
+    def _find_working_directory_and_env(self, _user: str, _home: Path) -> tuple[Path, Path | None]:
+        """Find the working directory and .env file using shared utilities."""
+        cwd = Path.cwd()
 
-        # Last resort: use current Python
-        return Path(sys.executable)
+        # Use shared find_env_file utility
+        env_file = find_env_file()
+
+        if env_file and env_file.exists():
+            # Use the directory containing .env as working directory
+            return env_file.parent, env_file
+
+        # No .env found - return cwd and expected location
+        return cwd, cwd / ".env"
 
     def _check_sudo(self) -> bool:
         """Check if running with sudo/root privileges."""
@@ -155,48 +223,27 @@ class ServiceManager:
     def _require_sudo(self) -> None:
         """
         Ensure running with sudo privileges.
-
-        If not running as root, automatically re-execute the command with sudo
-        using the current Python interpreter. This allows users to run:
-          uv run opensensor service setup
-
-        And it will automatically become:
-          sudo /path/to/python -m opensensor_enviroplus.cli.app service setup
+        If not root, re-execute with sudo.
         """
         if not self._check_sudo():
-            # Get the current Python interpreter (works with venv, uv, etc.)
             python_exe = sys.executable
-
-            # Reconstruct the command with the same arguments
-            # Use -m to run as module to ensure imports work correctly
             cmd = [
                 "sudo",
                 python_exe,
                 "-m",
                 "opensensor_enviroplus.cli.app",
-            ] + sys.argv[1:]  # Add original arguments (service, setup, etc.)
-
+                *sys.argv[1:],
+            ]
             print(f"This operation requires sudo. Re-executing with: {' '.join(cmd)}")
-
-            # Re-execute with sudo
             try:
                 os.execvp("sudo", cmd)
             except OSError as e:
                 raise PermissionError(
-                    f"Failed to execute with sudo: {e}\n"
-                    f"Try manually: sudo {python_exe} -m opensensor_enviroplus.cli.app {' '.join(sys.argv[1:])}"
+                    f"Failed to execute with sudo: {e}\nTry manually: sudo {' '.join(cmd)}"
                 ) from e
 
     def _run_systemctl(self, *args: str) -> tuple[int, str, str]:
-        """
-        Run systemctl command and return (returncode, stdout, stderr).
-
-        Args:
-            *args: Arguments to pass to systemctl
-
-        Returns:
-            Tuple of (returncode, stdout, stderr)
-        """
+        """Run systemctl command and return (returncode, stdout, stderr)."""
         try:
             result = subprocess.run(
                 ["systemctl", *args],
@@ -210,14 +257,60 @@ class ServiceManager:
         except FileNotFoundError:
             return 1, "", "systemctl command not found (is systemd installed?)"
 
-    def _generate_service_content(self) -> str:
-        """Generate systemd service file content with auto-detected paths."""
-        # Detect the opensensor CLI entry point
-        cli_path = self.venv_path / "bin" / "opensensor"
+    def _build_path_env(self) -> str:
+        """Build PATH environment variable dynamically."""
+        path_parts: list[str] = []
+        seen: set[str] = set()
 
-        # Build PATH environment variable
-        venv_bin = self.venv_path / "bin"
-        path_env = f"{venv_bin}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+        def add_path(p: Path | None) -> None:
+            if p and p.exists():
+                p_str = str(p)
+                if p_str not in seen:
+                    path_parts.append(p_str)
+                    seen.add(p_str)
+
+        # 1. CLI executable's directory (most important)
+        if self.env.cli_executable and self.env.cli_executable.exists:
+            add_path(self.env.cli_executable.path.parent)
+
+        # 2. Virtual environment bin
+        if self.env.virtual_env:
+            add_path(self.env.virtual_env / "bin")
+
+        # 3. XDG bin directory
+        add_path(self._get_xdg_bin_dir(self.env.home))
+
+        # 4. uv tool bin directory
+        uv_bin = self._get_uv_tool_bin_dir()
+        if uv_bin:
+            add_path(uv_bin)
+
+        # 5. Python executable's directory
+        add_path(self.env.python_executable.parent)
+
+        # 6. Standard system paths
+        system_paths = [
+            "/usr/local/sbin",
+            "/usr/local/bin",
+            "/usr/sbin",
+            "/usr/bin",
+            "/sbin",
+            "/bin",
+        ]
+        for p in system_paths:
+            path_parts.append(p)
+
+        return ":".join(path_parts)
+
+    def _generate_service_content(self) -> str:
+        """Generate systemd service file content."""
+        if not self.env.cli_executable:
+            raise RuntimeError("CLI executable not found. Cannot generate service file.")
+
+        cli_path = self.env.cli_executable.path
+        path_env = self._build_path_env()
+        env_file = self.env.env_file or (self.env.working_directory / ".env")
+        working_dir = self.env.working_directory
 
         return f"""[Unit]
 Description=OpenSensor Enviro+ Data Collector
@@ -227,11 +320,11 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User={self.user}
-Group={self.group}
-WorkingDirectory={self.project_root}
+User={self.env.user}
+Group={self.env.group}
+WorkingDirectory={working_dir}
 Environment=PATH={path_env}
-EnvironmentFile={self.env_file}
+EnvironmentFile={env_file}
 ExecStart={cli_path} start --foreground
 Restart=always
 RestartSec=10
@@ -244,43 +337,79 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths={self.project_root}/output {self.project_root}/logs
+ReadWritePaths={working_dir}/output {working_dir}/logs
 
 [Install]
 WantedBy=multi-user.target
 """
 
+    def _validate_for_install(self) -> list[str]:
+        """Validate environment before installation. Returns list of errors."""
+        errors: list[str] = []
+
+        # Check for ephemeral uvx environment
+        if self.env.installation_type == "uvx_ephemeral":
+            errors.append(
+                "Running from uvx ephemeral environment.\n"
+                "The uvx cache is temporary and will be cleaned up.\n"
+                "Please install permanently first:\n"
+                "  uv tool install opensensor-enviroplus\n"
+                "  # or\n"
+                "  pip install opensensor-enviroplus"
+            )
+
+        # Check CLI executable
+        if not self.env.cli_executable:
+            errors.append(
+                f"Cannot find '{self.env.cli_name}' executable.\n"
+                "Make sure the package is properly installed:\n"
+                "  uv tool install opensensor-enviroplus\n"
+                "  # or\n"
+                "  pip install opensensor-enviroplus\n\n"
+                "Then ensure it's in your PATH:\n"
+                "  which opensensor"
+            )
+        elif not self.env.cli_executable.exists:
+            errors.append(
+                f"CLI executable not found at: {self.env.cli_executable.path}\n"
+                f"(Discovered via: {self.env.cli_executable.source})"
+            )
+
+        # Check .env file
+        if not self.env.env_file or not self.env.env_file.exists():
+            expected = self.env.env_file or (self.env.working_directory / ".env")
+            errors.append(
+                f"Configuration file not found: {expected}\n"
+                "Run 'opensensor setup' first to create configuration."
+            )
+
+        return errors
+
     def install(self) -> None:
         """Create and install the systemd service file."""
         self._require_sudo()
 
-        # Check if .env exists
-        if not self.env_file.exists():
-            raise FileNotFoundError(
-                f"Configuration file not found: {self.env_file}\n"
-                "Run 'opensensor setup' first to create configuration."
-            )
+        # Validate environment
+        errors = self._validate_for_install()
+        if errors:
+            raise RuntimeError("\n\n".join(errors))
 
-        # Create required directories for mount namespacing
-        output_dir = self.project_root / "output"
-        logs_dir = self.project_root / "logs"
+        # Create required directories
+        output_dir = self.env.working_directory / "output"
+        logs_dir = self.env.working_directory / "logs"
         output_dir.mkdir(parents=True, exist_ok=True)
         logs_dir.mkdir(parents=True, exist_ok=True)
 
-        # Set ownership to the service user
-        import shutil
+        # Set ownership
+        shutil.chown(str(output_dir), user=self.env.user, group=self.env.group)
+        shutil.chown(str(logs_dir), user=self.env.user, group=self.env.group)
 
-        shutil.chown(str(output_dir), user=self.user, group=self.group)
-        shutil.chown(str(logs_dir), user=self.user, group=self.group)
-
-        # Generate service content
+        # Generate and write service file
         service_content = self._generate_service_content()
-
-        # Write service file
         self.service_file.write_text(service_content)
 
-        # Reload systemd daemon
-        returncode, stdout, stderr = self._run_systemctl("daemon-reload")
+        # Reload systemd
+        returncode, _, stderr = self._run_systemctl("daemon-reload")
         if returncode != 0:
             raise RuntimeError(f"Failed to reload systemd daemon: {stderr}")
 
@@ -291,66 +420,49 @@ WantedBy=multi-user.target
         if not self.service_file.exists():
             raise FileNotFoundError(f"Service file not found: {self.service_file}")
 
-        # Remove service file
         self.service_file.unlink()
-
-        # Reload systemd daemon
         self._run_systemctl("daemon-reload")
 
     def enable(self) -> None:
         """Enable the service to start on boot."""
         self._require_sudo()
-
-        returncode, stdout, stderr = self._run_systemctl("enable", self.SERVICE_NAME)
+        returncode, _, stderr = self._run_systemctl("enable", self.SERVICE_NAME)
         if returncode != 0:
             raise RuntimeError(f"Failed to enable service: {stderr}")
 
     def disable(self) -> None:
         """Disable the service from starting on boot."""
         self._require_sudo()
-
-        returncode, stdout, stderr = self._run_systemctl("disable", self.SERVICE_NAME)
+        returncode, _, stderr = self._run_systemctl("disable", self.SERVICE_NAME)
         if returncode != 0:
             raise RuntimeError(f"Failed to disable service: {stderr}")
 
     def start(self) -> None:
         """Start the service."""
         self._require_sudo()
-
-        returncode, stdout, stderr = self._run_systemctl("start", self.SERVICE_NAME)
+        returncode, _, stderr = self._run_systemctl("start", self.SERVICE_NAME)
         if returncode != 0:
             raise RuntimeError(f"Failed to start service: {stderr}")
 
     def stop(self) -> None:
         """Stop the service."""
         self._require_sudo()
-
-        returncode, stdout, stderr = self._run_systemctl("stop", self.SERVICE_NAME)
+        returncode, _, stderr = self._run_systemctl("stop", self.SERVICE_NAME)
         if returncode != 0:
             raise RuntimeError(f"Failed to stop service: {stderr}")
 
     def restart(self) -> None:
         """Restart the service."""
         self._require_sudo()
-
-        returncode, stdout, stderr = self._run_systemctl("restart", self.SERVICE_NAME)
+        returncode, _, stderr = self._run_systemctl("restart", self.SERVICE_NAME)
         if returncode != 0:
             raise RuntimeError(f"Failed to restart service: {stderr}")
 
     def status(self) -> tuple[str, bool]:
-        """
-        Get service status.
-
-        Returns:
-            Tuple of (status_output, is_active)
-        """
-        # Get detailed status
-        returncode, stdout, stderr = self._run_systemctl("status", self.SERVICE_NAME)
-
-        # Check if active
+        """Get service status. Returns (status_output, is_active)."""
+        _, stdout, stderr = self._run_systemctl("status", self.SERVICE_NAME)
         _, active_stdout, _ = self._run_systemctl("is-active", self.SERVICE_NAME)
         is_active = active_stdout.strip() == "active"
-
         return stdout if stdout else stderr, is_active
 
     def is_installed(self) -> bool:
@@ -368,44 +480,49 @@ WantedBy=multi-user.target
         return returncode == 0 and stdout.strip() == "active"
 
     def get_logs(self, lines: int = 50, follow: bool = False) -> None:
-        """
-        Show service logs using journalctl.
-
-        Args:
-            lines: Number of lines to show
-            follow: Follow log output
-        """
+        """Show service logs using journalctl."""
         cmd = ["journalctl", "-u", self.SERVICE_NAME, "-n", str(lines)]
-
         if follow:
             cmd.append("-f")
 
         try:
             if follow:
-                # For follow mode, run interactively
                 subprocess.run(cmd)
             else:
-                # For non-follow, capture and print
                 result = subprocess.run(cmd, capture_output=True, text=True)
                 print(result.stdout)
         except KeyboardInterrupt:
-            # Graceful exit on Ctrl+C
             pass
         except FileNotFoundError as e:
             raise RuntimeError("journalctl command not found (is systemd installed?)") from e
 
     def get_info(self) -> dict:
-        """Get information about detected paths and configuration."""
+        """Get comprehensive information about detected environment."""
+        cli_info = self.env.cli_executable
         return {
-            "user": self.user,
-            "group": self.group,
-            "project_root": str(self.project_root),
-            "venv_path": str(self.venv_path),
-            "python_path": str(self.python_path),
-            "env_file": str(self.env_file),
-            "service_file": str(self.service_file),
+            # User info
+            "user": self.env.user,
+            "group": self.env.group,
+            "home": str(self.env.home),
+            # Python environment
+            "python_executable": str(self.env.python_executable),
+            "virtual_env": str(self.env.virtual_env) if self.env.virtual_env else None,
+            "is_venv": self.env.is_venv,
+            "installation_type": self.env.installation_type,
+            # CLI executable
+            "cli_executable": str(cli_info.path) if cli_info else None,
+            "cli_exists": cli_info.exists if cli_info else False,
+            "cli_discovery_method": cli_info.source if cli_info else None,
+            # Paths
+            "working_directory": str(self.env.working_directory),
+            "env_file": str(self.env.env_file) if self.env.env_file else None,
+            "env_file_exists": self.env.env_file.exists() if self.env.env_file else False,
+            # Service status
             "service_name": self.SERVICE_NAME,
+            "service_file": str(self.service_file),
             "installed": self.is_installed(),
             "enabled": self.is_enabled() if self.is_installed() else False,
             "active": self.is_active() if self.is_installed() else False,
+            # PATH that will be used
+            "path_env": self._build_path_env(),
         }

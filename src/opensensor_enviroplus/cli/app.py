@@ -14,14 +14,20 @@ from opensensor_enviroplus.collector.polars_collector import PolarsSensorCollect
 from opensensor_enviroplus.config.settings import AppConfig, SensorConfig, StorageConfig
 from opensensor_enviroplus.service.manager import ServiceManager
 from opensensor_enviroplus.sync.obstore_sync import ObstoreSync
+from opensensor_enviroplus.utils.env import (
+    ensure_directories,
+    parse_env_file,
+    write_env_file,
+)
 from opensensor_enviroplus.utils.logging import setup_logging
 from opensensor_enviroplus.utils.uuid_gen import generate_station_id, validate_station_id
 
-# Create Typer app
+# Create Typer app with rich markup support
 app = typer.Typer(
     name="opensensor",
     help="OpenSensor.Space - Environmental sensor data collector for Enviro+",
     add_completion=False,
+    rich_markup_mode="rich",
 )
 
 console = Console()
@@ -35,146 +41,126 @@ def print_banner():
 @app.command()
 def setup(
     station_id: str | None = typer.Option(
-        None, help="Station UUID (auto-generated if not provided)"
+        None, "--station-id", "-s", help="Station UUID (auto-generated if not provided)"
     ),
-    output_dir: Path = typer.Option(Path("output"), help="Data output directory"),
-    interactive: bool = typer.Option(True, help="Interactive configuration"),
+    output_dir: Path | None = typer.Option(
+        None, "--output-dir", "-o", help="Data output directory"
+    ),
+    interactive: bool = typer.Option(
+        True, "--interactive/--no-interactive", "-i", help="Interactive configuration"
+    ),
+    force: bool = typer.Option(False, "--force", "-f", help="Overwrite existing configuration"),
 ):
     """
     Setup and configure opensensor-enviroplus.
 
-    This will:
-    - Generate station UUID
-    - Configure sensor settings
-    - Set up cloud sync (optional)
-    - Create systemd service (optional)
+    If a .env file already exists, it will be preserved and only missing
+    values will be added. Use --force to overwrite completely.
     """
     print_banner()
     console.print("[bold]Setup Configuration[/bold]\n")
 
-    # Generate or use provided station ID
-    # Generate or use provided station ID
+    env_file = Path(".env")
+    existing_config = parse_env_file(env_file)
+
+    # Handle existing configuration
+    if existing_config and not force:
+        console.print(f"[yellow]Found existing configuration:[/yellow] {env_file.absolute()}")
+        existing_station = existing_config.get("OPENSENSOR_STATION_ID")
+        if existing_station:
+            console.print(f"  Station ID: [cyan]{existing_station}[/cyan]")
+
+        if interactive:
+            action = typer.prompt(
+                "\nWhat would you like to do?",
+                type=typer.Choice(["keep", "update", "replace"]),
+                default="keep",
+                show_choices=True,
+            )
+            if action == "keep":
+                console.print("\n[green]Keeping existing configuration.[/green]")
+                ensure_directories(existing_config.get("OPENSENSOR_OUTPUT_DIR", "output"), "logs")
+                console.print("\nRun [cyan]opensensor config[/cyan] to view current settings.\n")
+                return
+            elif action == "replace":
+                existing_config = {}  # Start fresh
+                console.print("\n[yellow]Starting fresh configuration...[/yellow]\n")
+        else:
+            # Non-interactive: keep existing and just ensure directories
+            console.print("[dim]Non-interactive mode: keeping existing configuration[/dim]")
+            ensure_directories(existing_config.get("OPENSENSOR_OUTPUT_DIR", "output"), "logs")
+            return
+
+    # Determine station ID
+    final_station_id: str
     if station_id:
-        # Validate provided station ID
         if not validate_station_id(station_id):
             console.print("[red]ERROR: Invalid UUID format[/red]")
             raise typer.Exit(1)
-        console.print(f"Using provided station UUID: [green]{station_id}[/green]")
-    else:
-        # Interactive mode: ask user
-        if interactive:
-            use_existing = typer.confirm("Do you have an existing station UUID?", default=False)
-            if use_existing:
-                while True:
-                    station_id = typer.prompt("Enter your station UUID")
-                    if validate_station_id(station_id):
-                        break
-                    console.print("[red]Invalid UUID format. Please try again.[/red]")
-                console.print(f"Using existing station UUID: [green]{station_id}[/green]")
-            else:
-                station_id = generate_station_id()
-                console.print(f"Generated new station UUID v7: [green]{station_id}[/green]")
-                console.print("[dim](Time-ordered UUID for better database performance)[/dim]")
+        final_station_id = station_id
+        console.print(f"Using provided station UUID: [green]{final_station_id}[/green]")
+    elif existing_config.get("OPENSENSOR_STATION_ID"):
+        final_station_id = existing_config["OPENSENSOR_STATION_ID"]
+        console.print(f"Using existing station UUID: [green]{final_station_id}[/green]")
+    elif interactive:
+        use_existing = typer.confirm("Do you have an existing station UUID?", default=False)
+        if use_existing:
+            while True:
+                final_station_id = typer.prompt("Enter your station UUID")
+                if validate_station_id(final_station_id):
+                    break
+                console.print("[red]Invalid UUID format. Please try again.[/red]")
+            console.print(f"Using station UUID: [green]{final_station_id}[/green]")
         else:
-            # Non-interactive: auto-generate
-            station_id = generate_station_id()
-            console.print(f"Generated station UUID v7: [green]{station_id}[/green]")
-
-    # Create .env file
-    env_file = Path(".env")
-
-    config_lines = [
-        "# OpenSensor.Space Configuration",
-        "# https://opensensor.space",
-        "",
-        "# Station Configuration",
-        f"OPENSENSOR_STATION_ID={station_id}",
-        "",
-        "# Data Collection",
-        "OPENSENSOR_READ_INTERVAL=5",
-        "OPENSENSOR_BATCH_DURATION=900",
-        "",
-        "# Output Settings",
-        f"OPENSENSOR_OUTPUT_DIR={output_dir}",
-        "OPENSENSOR_COMPRESSION=snappy",
-        "",
-        "# Logging",
-        "OPENSENSOR_LOG_LEVEL=INFO",
-    ]
-
-    # Cloud sync configuration (optional)
-    enable_sync = False
-    if interactive:
-        enable_sync = typer.confirm("\nEnable cloud storage sync?", default=False)
-
-    if enable_sync:
-        console.print("\n[bold]Cloud Storage Configuration[/bold]")
-        bucket = typer.prompt("Bucket name")
-        prefix = typer.prompt("Prefix/path in bucket", default="sensor-data")
-        region = typer.prompt("Region", default="us-west-2")
-        endpoint = typer.prompt("Endpoint URL (optional, for MinIO/custom S3)", default="")
-        access_key = typer.prompt("Access Key ID")
-        secret_key = typer.prompt("Secret Access Key", hide_input=True)
-
-        config_lines.extend(
-            [
-                "",
-                "# Cloud Sync (uncomment and configure to enable)",
-                "OPENSENSOR_SYNC_ENABLED=true",
-                "OPENSENSOR_SYNC_INTERVAL_MINUTES=15",
-                "",
-                "# S3/MinIO Storage Settings",
-                f"OPENSENSOR_STORAGE_BUCKET={bucket}",
-                f"OPENSENSOR_STORAGE_PREFIX={prefix}",
-                f"OPENSENSOR_STORAGE_REGION={region}",
-                "",
-                "# AWS Credentials (for AWS S3)",
-                f"OPENSENSOR_AWS_ACCESS_KEY_ID={access_key}",
-                f"OPENSENSOR_AWS_SECRET_ACCESS_KEY={secret_key}",
-                "",
-                "# MinIO/Custom S3 Endpoint (optional - only needed for non-AWS S3)",
-                f"OPENSENSOR_STORAGE_ENDPOINT={endpoint}",
-            ]
-        )
+            final_station_id = generate_station_id()
+            console.print(f"Generated new station UUID v7: [green]{final_station_id}[/green]")
+            console.print("[dim](Time-ordered UUID for better database performance)[/dim]")
     else:
-        # Add commented sync template for easy enabling later
-        config_lines.extend(
-            [
-                "",
-                "# Cloud Sync (uncomment and configure to enable)",
-                "# OPENSENSOR_SYNC_ENABLED=true",
-                "# OPENSENSOR_SYNC_INTERVAL_MINUTES=15",
-                "",
-                "# S3/MinIO Storage Settings",
-                "# OPENSENSOR_STORAGE_BUCKET=my-sensor-bucket",
-                f"# OPENSENSOR_STORAGE_PREFIX=sensors/station-{station_id[:8]}",
-                "# OPENSENSOR_STORAGE_REGION=us-west-2",
-                "",
-                "# AWS Credentials (for AWS S3)",
-                "# IMPORTANT: The prefix is used for IAM policy scoping!",
-                "# Example IAM policy limits this station to only write to its prefix:",
-                f'# "Resource": "arn:aws:s3:::my-sensor-bucket/sensors/station-{station_id[:8]}/*"',
-                "# OPENSENSOR_AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE",
-                "# OPENSENSOR_AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
-                "",
-                "# MinIO/Custom S3 Endpoint (optional - only needed for non-AWS S3)",
-                "# OPENSENSOR_STORAGE_ENDPOINT=https://minio.example.com:9000",
-            ]
+        final_station_id = generate_station_id()
+        console.print(f"Generated station UUID v7: [green]{final_station_id}[/green]")
+
+    # Update config with station ID
+    existing_config["OPENSENSOR_STATION_ID"] = final_station_id
+
+    # Handle output directory
+    if output_dir:
+        existing_config["OPENSENSOR_OUTPUT_DIR"] = str(output_dir)
+    elif "OPENSENSOR_OUTPUT_DIR" not in existing_config:
+        existing_config["OPENSENSOR_OUTPUT_DIR"] = "output"
+
+    # Cloud sync configuration (only in interactive mode if not already configured)
+    if (
+        interactive
+        and not existing_config.get("OPENSENSOR_SYNC_ENABLED")
+        and typer.confirm("\nEnable cloud storage sync?", default=False)
+    ):
+        console.print("\n[bold]Cloud Storage Configuration[/bold]")
+        existing_config["OPENSENSOR_SYNC_ENABLED"] = "true"
+        existing_config["OPENSENSOR_STORAGE_BUCKET"] = typer.prompt("Bucket name")
+        existing_config["OPENSENSOR_STORAGE_PREFIX"] = typer.prompt(
+            "Prefix/path in bucket", default="sensor-data"
+        )
+        existing_config["OPENSENSOR_STORAGE_REGION"] = typer.prompt("Region", default="us-west-2")
+        endpoint = typer.prompt("Endpoint URL (optional, for MinIO)", default="")
+        if endpoint:
+            existing_config["OPENSENSOR_STORAGE_ENDPOINT"] = endpoint
+        existing_config["OPENSENSOR_AWS_ACCESS_KEY_ID"] = typer.prompt("Access Key ID")
+        existing_config["OPENSENSOR_AWS_SECRET_ACCESS_KEY"] = typer.prompt(
+            "Secret Access Key", hide_input=True
         )
 
-    # Write .env file
-    env_file.write_text("\n".join(config_lines))
+    # Write configuration
+    write_env_file(env_file, existing_config, final_station_id)
     console.print(f"\nConfiguration saved to [green]{env_file}[/green]")
 
     # Create directories
-    output_dir.mkdir(parents=True, exist_ok=True)
-    Path("logs").mkdir(parents=True, exist_ok=True)
+    ensure_directories(existing_config.get("OPENSENSOR_OUTPUT_DIR", "output"), "logs")
 
     console.print("\n[bold green]Setup complete![/bold green]")
     console.print("\nNext steps:")
-    console.print("  1. Review config: [cyan]cat .env[/cyan]")
+    console.print("  1. Review config: [cyan]opensensor config[/cyan]")
     console.print("  2. Start collector: [cyan]opensensor start[/cyan]")
-    console.print("  3. View logs: [cyan]opensensor logs[/cyan]\n")
+    console.print("  3. Or setup service: [cyan]opensensor service setup[/cyan]\n")
 
 
 @app.command()
@@ -683,22 +669,59 @@ def service_info():
 
         console.print("\n[bold blue]Service Configuration[/bold blue]\n")
 
-        console.print("[bold]Auto-detected paths:[/bold]")
+        # User & System
+        console.print("[bold]User & System:[/bold]")
         console.print(f"  User: [cyan]{info['user']}[/cyan]")
         console.print(f"  Group: [cyan]{info['group']}[/cyan]")
-        console.print(f"  Project root: [cyan]{info['project_root']}[/cyan]")
-        console.print(f"  Virtual env: [cyan]{info['venv_path']}[/cyan]")
-        console.print(f"  Python: [cyan]{info['python_path']}[/cyan]")
-        console.print(f"  Config file: [cyan]{info['env_file']}[/cyan]")
+        console.print(f"  Home: [cyan]{info['home']}[/cyan]")
 
-        console.print("\n[bold]Service status:[/bold]")
+        # Python Environment
+        console.print("\n[bold]Python Environment:[/bold]")
+        console.print(f"  Python: [cyan]{info['python_executable']}[/cyan]")
+        console.print(f"  Virtual env: [cyan]{info['virtual_env'] or 'None'}[/cyan]")
+        console.print(f"  Is venv: [cyan]{'Yes' if info['is_venv'] else 'No'}[/cyan]")
+        console.print(f"  Installation type: [cyan]{info['installation_type']}[/cyan]")
+
+        # CLI Executable
+        console.print("\n[bold]CLI Executable:[/bold]")
+        if info["cli_executable"]:
+            exists_color = "green" if info["cli_exists"] else "red"
+            exists_text = "Yes" if info["cli_exists"] else "NO - MISSING!"
+            console.print(f"  Path: [cyan]{info['cli_executable']}[/cyan]")
+            console.print(f"  Exists: [{exists_color}]{exists_text}[/{exists_color}]")
+            console.print(f"  Found via: [dim]{info['cli_discovery_method']}[/dim]")
+        else:
+            console.print("  [red]NOT FOUND[/red]")
+            console.print("  [dim]Searched: PATH, uv tool dir, VIRTUAL_ENV, XDG_BIN_HOME[/dim]")
+
+        # Working Directory & Config
+        console.print("\n[bold]Configuration:[/bold]")
+        console.print(f"  Working directory: [cyan]{info['working_directory']}[/cyan]")
+        if info["env_file"]:
+            env_color = "green" if info["env_file_exists"] else "yellow"
+            env_status = "" if info["env_file_exists"] else " (not created yet)"
+            console.print(
+                f"  Config file: [{env_color}]{info['env_file']}{env_status}[/{env_color}]"
+            )
+        else:
+            console.print("  Config file: [yellow]None[/yellow]")
+
+        # Service Status
+        console.print("\n[bold]Service Status:[/bold]")
         console.print(f"  Service name: [cyan]{info['service_name']}[/cyan]")
         console.print(f"  Service file: [cyan]{info['service_file']}[/cyan]")
         console.print(f"  Installed: [cyan]{'Yes' if info['installed'] else 'No'}[/cyan]")
 
         if info["installed"]:
             console.print(f"  Enabled: [cyan]{'Yes' if info['enabled'] else 'No'}[/cyan]")
-            console.print(f"  Active: [cyan]{'Yes' if info['active'] else 'No'}[/cyan]")
+            active_color = "green" if info["active"] else "yellow"
+            console.print(
+                f"  Active: [{active_color}]{'Yes' if info['active'] else 'No'}[/{active_color}]"
+            )
+
+        # PATH (collapsed)
+        console.print("\n[bold]PATH for service:[/bold]")
+        console.print(f"  [dim]{info['path_env'][:80]}...[/dim]")
 
         console.print()
 

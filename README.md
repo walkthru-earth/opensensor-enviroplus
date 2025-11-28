@@ -59,7 +59,7 @@ source .venv/bin/activate
 
 ```bash
 # Fix serial port permissions for PMS5003 sensor (requires reboot after)
-sudo opensensor fix-permissions
+sudo $(which opensensor) fix-permissions
 
 # Interactive setup (creates .env configuration)
 opensensor setup
@@ -125,7 +125,7 @@ opensensor logs --follow
 opensensor config
 
 # Fix sensor permissions (requires sudo, then reboot)
-sudo opensensor fix-permissions
+sudo $(which opensensor) fix-permissions
 ```
 
 #### Service Management

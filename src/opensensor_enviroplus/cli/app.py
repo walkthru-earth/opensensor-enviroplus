@@ -411,7 +411,7 @@ def fix_permissions():
     # Check if running as root
     if os.geteuid() != 0:
         console.print("[red]ERROR: This command requires sudo.[/red]")
-        console.print("\nRun: [cyan]sudo opensensor fix-permissions[/cyan]\n")
+        console.print("\nRun: [cyan]sudo $(which opensensor) fix-permissions[/cyan]\n")
         sys.exit(1)
 
     # Get the actual user (not root)

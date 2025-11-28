@@ -58,8 +58,8 @@ jobs:
       - name: Check service commands
         run: uv run opensensor service --help
 
-      - name: Verify service auto-detection
-        run: uv run opensensor service info
+      - name: Check info command
+        run: uv run opensensor info
 
   build:
     name: Build Package

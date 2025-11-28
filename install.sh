@@ -88,6 +88,13 @@ enable_interfaces() {
         info "Enabling SPI interface..."
         raspi-config nonint do_spi 0 2>/dev/null || warn "Could not enable SPI (may already be enabled)"
         success "SPI interface enabled"
+
+        info "Configuring Serial Port (for PMS5003)..."
+        # Disable serial console (login shell)
+        raspi-config nonint do_serial_cons 1 2>/dev/null || warn "Could not disable serial console"
+        # Enable serial hardware
+        raspi-config nonint do_serial_hw 0 2>/dev/null || warn "Could not enable serial hardware"
+        success "Serial port configured"
     else
         warn "raspi-config not found. Please enable I2C and SPI manually."
     fi

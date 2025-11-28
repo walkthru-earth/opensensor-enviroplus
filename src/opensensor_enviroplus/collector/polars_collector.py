@@ -87,6 +87,7 @@ class PolarsSensorCollector:
                 ("raw_temperature", pa.float32()),
                 ("pressure", pa.float32()),
                 ("humidity", pa.float32()),
+                ("raw_humidity", pa.float32()),
                 ("oxidised", pa.float32()),
                 ("reducing", pa.float32()),
                 ("nh3", pa.float32()),
@@ -159,6 +160,32 @@ class PolarsSensorCollector:
         avg_cpu_temp = sum(self.cpu_temps) / len(self.cpu_temps)
         return raw_temp - ((avg_cpu_temp - raw_temp) / self.config.temp_compensation_factor)
 
+    def _compensate_humidity(
+        self, raw_humidity: float, raw_temp: float, compensated_temp: float
+    ) -> float:
+        """
+        Compensate humidity based on corrected temperature.
+
+        The BME280's humidity reading is affected by temperature errors.
+        This uses the dewpoint approach from Pimoroni's official examples:
+        https://github.com/pimoroni/enviroplus-python/blob/main/examples/weather-and-light.py
+
+        Formula:
+        1. Calculate dewpoint from raw readings
+        2. Recalculate humidity using compensated temperature and dewpoint
+        """
+        if not self.config.temp_compensation_enabled:
+            return raw_humidity
+
+        # Calculate dewpoint from raw (incorrect) readings
+        dewpoint = raw_temp - ((100 - raw_humidity) / 5)
+
+        # Recalculate humidity using compensated temperature
+        compensated_humidity = 100 - (5 * (compensated_temp - dewpoint))
+
+        # Clamp to valid range (0-100%)
+        return max(0, min(100, compensated_humidity))
+
     def read_sensors(self) -> dict[str, Any]:
         """Read from all available sensors."""
         data: dict[str, Any] = {
@@ -170,10 +197,16 @@ class PolarsSensorCollector:
         if self.bme280:
             try:
                 raw_temp = self.bme280.get_temperature()
-                data["temperature"] = self._compensate_temperature(raw_temp)
+                raw_humidity = self.bme280.get_humidity()
+                compensated_temp = self._compensate_temperature(raw_temp)
+
+                data["temperature"] = compensated_temp
                 data["raw_temperature"] = raw_temp
                 data["pressure"] = self.bme280.get_pressure()
-                data["humidity"] = self.bme280.get_humidity()
+                data["humidity"] = self._compensate_humidity(
+                    raw_humidity, raw_temp, compensated_temp
+                )
+                data["raw_humidity"] = raw_humidity
 
                 # Gas sensor
                 gas_data = gas.read_all()
@@ -329,6 +362,7 @@ class PolarsSensorCollector:
             "raw_temperature",
             "pressure",
             "humidity",
+            "raw_humidity",
             "oxidised",
             "reducing",
             "nh3",

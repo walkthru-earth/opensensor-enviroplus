@@ -14,7 +14,12 @@ import pyarrow as pa
 
 from opensensor_enviroplus.config.settings import SensorConfig, StorageConfig
 from opensensor_enviroplus.sync.obstore_sync import ObstoreSync
-from opensensor_enviroplus.utils.health import collect_health_metrics, health_to_dict
+from opensensor_enviroplus.utils.compensation import (
+    compensate_humidity,
+    compensate_temperature,
+    get_cpu_temperature,
+)
+from opensensor_enviroplus.utils.env import collect_health_metrics, health_to_dict
 from opensensor_enviroplus.utils.logging import (
     log_batch_write,
     log_error,
@@ -180,11 +185,7 @@ class PolarsSensorCollector:
 
     def _get_cpu_temperature(self) -> float:
         """Get CPU temperature for compensation."""
-        try:
-            with Path("/sys/class/thermal/thermal_zone0/temp").open() as f:
-                return float(f.read()) / 1000.0
-        except (OSError, ValueError):
-            return 40.0
+        return get_cpu_temperature()
 
     @staticmethod
     def _voltage_to_resistance(voltage: float) -> float:
@@ -215,7 +216,12 @@ class PolarsSensorCollector:
             self.cpu_temps = self.cpu_temps[1:] + [cpu_temp]
 
         avg_cpu_temp = sum(self.cpu_temps) / len(self.cpu_temps)
-        return raw_temp - ((avg_cpu_temp - raw_temp) / self.config.temp_compensation_factor)
+        return compensate_temperature(
+            raw_temp,
+            cpu_temp,
+            self.config.temp_compensation_factor,
+            avg_cpu_temp,
+        )
 
     def _compensate_humidity(
         self, raw_humidity: float, raw_temp: float, compensated_temp: float
@@ -234,14 +240,8 @@ class PolarsSensorCollector:
         if not self.config.temp_compensation_enabled:
             return raw_humidity
 
-        # Calculate dewpoint from raw (incorrect) readings
-        dewpoint = raw_temp - ((100 - raw_humidity) / 5)
-
-        # Recalculate humidity using compensated temperature
-        compensated_humidity = 100 - (5 * (compensated_temp - dewpoint))
-
-        # Clamp to valid range (0-100%)
-        return max(0, min(100, compensated_humidity))
+        # Use shared utility
+        return compensate_humidity(raw_humidity, raw_temp, compensated_temp)
 
     def read_sensors(self) -> dict[str, Any]:
         """Read from all available sensors."""

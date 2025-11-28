@@ -26,6 +26,11 @@ from opensensor_enviroplus.collector.polars_collector import PolarsSensorCollect
 from opensensor_enviroplus.config.settings import AppConfig, SensorConfig, StorageConfig
 from opensensor_enviroplus.service.manager import ServiceManager
 from opensensor_enviroplus.sync.obstore_sync import ObstoreSync
+from opensensor_enviroplus.utils.compensation import (
+    compensate_humidity,
+    compensate_temperature,
+    get_cpu_temperature,
+)
 from opensensor_enviroplus.utils.env import (
     ensure_directories,
     parse_env_file,
@@ -508,8 +513,25 @@ def test(
         # BME280 readings
         if bme280:
             try:
-                reading["Temp °C"] = f"{bme280.get_temperature():.1f}"
-                reading["Hum %"] = f"{bme280.get_humidity():.1f}"
+                raw_temp = bme280.get_temperature()
+                raw_hum = bme280.get_humidity()
+
+                # Apply compensation
+                cpu_temp = get_cpu_temperature()
+                comp_temp = compensate_temperature(
+                    raw_temp,
+                    cpu_temp,
+                    config.temp_compensation_factor if config.temp_compensation_enabled else 1.0,
+                )
+
+                if config.temp_compensation_enabled:
+                    comp_hum = compensate_humidity(raw_hum, raw_temp, comp_temp)
+                    reading["Temp °C"] = f"{comp_temp:.1f} (raw: {raw_temp:.1f})"
+                    reading["Hum %"] = f"{comp_hum:.1f} (raw: {raw_hum:.1f})"
+                else:
+                    reading["Temp °C"] = f"{raw_temp:.1f}"
+                    reading["Hum %"] = f"{raw_hum:.1f}"
+
                 reading["hPa"] = f"{bme280.get_pressure():.0f}"
             except Exception:
                 reading["Temp °C"] = "-"

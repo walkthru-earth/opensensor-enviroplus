@@ -1,6 +1,6 @@
 [project]
 name = "opensensor-enviroplus"
-version = "0.3.0"
+version = "0.4.0"
 description = "Modern CLI-based environmental sensor collector using Polars, Arrow, and Delta Lake for Enviro+"
 readme = "README.md"
 authors = [{ name = "Youssef Harby", email = "yharby@walkthru.earth" }]
@@ -33,7 +33,7 @@ dependencies = [
     "pydantic>=2.12.4",
     "pydantic-settings>=2.12.0",
     "python-dotenv>=1.2.1",
-    "typer>=0.20.0",  # includes rich by default
+    "typer>=0.20.0",             # includes rich by default
     "uuid6>=2025.0.1",
     # Raspberry Pi sensor libraries (Linux ARM only, optional on other platforms)
     "pimoroni-bme280>=1.0.0 ; sys_platform == 'linux'",

@@ -216,18 +216,88 @@ def setup(
     ):
         console.print("\n[bold]Cloud Storage Configuration[/bold]")
         existing_config["OPENSENSOR_SYNC_ENABLED"] = "true"
-        existing_config["OPENSENSOR_STORAGE_BUCKET"] = typer.prompt("Bucket name")
+
+        # Provider selection
+        console.print("\n[dim]Supported providers:[/dim]")
+        console.print("  s3       - AWS S3")
+        console.print("  r2       - Cloudflare R2 (no egress fees)")
+        console.print("  gcs      - Google Cloud Storage")
+        console.print("  azure    - Azure Blob Storage")
+        console.print("  minio    - MinIO (self-hosted)")
+        console.print("  wasabi   - Wasabi")
+        console.print("  backblaze - Backblaze B2")
+        console.print("  hetzner  - Hetzner Object Storage")
+
+        provider = typer.prompt(
+            "\nStorage provider",
+            default="s3",
+            type=typer.Choice(
+                ["s3", "r2", "gcs", "azure", "minio", "wasabi", "backblaze", "hetzner"],
+                case_sensitive=False,
+            ),
+        ).lower()
+        existing_config["OPENSENSOR_STORAGE_PROVIDER"] = provider
+
+        # Common settings
+        existing_config["OPENSENSOR_STORAGE_BUCKET"] = typer.prompt("Bucket/container name")
         existing_config["OPENSENSOR_STORAGE_PREFIX"] = typer.prompt(
             "Prefix/path in bucket", default="sensor-data"
         )
-        existing_config["OPENSENSOR_STORAGE_REGION"] = typer.prompt("Region", default="us-west-2")
-        endpoint = typer.prompt("Endpoint URL (optional, for MinIO)", default="")
-        if endpoint:
-            existing_config["OPENSENSOR_STORAGE_ENDPOINT"] = endpoint
-        existing_config["OPENSENSOR_AWS_ACCESS_KEY_ID"] = typer.prompt("Access Key ID")
-        existing_config["OPENSENSOR_AWS_SECRET_ACCESS_KEY"] = typer.prompt(
-            "Secret Access Key", hide_input=True
-        )
+
+        # Provider-specific configuration
+        if provider == "gcs":
+            # Google Cloud Storage
+            sa_path = typer.prompt("Service account JSON path (or press Enter for ADC)", default="")
+            if sa_path:
+                existing_config["OPENSENSOR_GCS_SERVICE_ACCOUNT_PATH"] = sa_path
+            else:
+                console.print("[dim]Using Application Default Credentials[/dim]")
+
+        elif provider == "azure":
+            # Azure Blob Storage
+            existing_config["OPENSENSOR_AZURE_STORAGE_ACCOUNT"] = typer.prompt(
+                "Storage account name"
+            )
+            auth_method = typer.prompt(
+                "Auth method", type=typer.Choice(["key", "sas"]), default="key"
+            )
+            if auth_method == "key":
+                existing_config["OPENSENSOR_AZURE_STORAGE_KEY"] = typer.prompt(
+                    "Storage account key", hide_input=True
+                )
+            else:
+                existing_config["OPENSENSOR_AZURE_SAS_TOKEN"] = typer.prompt(
+                    "SAS token", hide_input=True
+                )
+
+        else:
+            # S3-compatible providers (s3, r2, minio, wasabi, backblaze, hetzner)
+            if provider in ("wasabi", "backblaze", "hetzner"):
+                existing_config["OPENSENSOR_STORAGE_REGION"] = typer.prompt(
+                    "Region", default="us-east-1" if provider == "wasabi" else "us-west-004"
+                )
+            elif provider == "s3":
+                existing_config["OPENSENSOR_STORAGE_REGION"] = typer.prompt(
+                    "Region", default="us-west-2"
+                )
+
+            # Endpoint (required for r2, minio; optional for others)
+            if provider == "r2":
+                console.print(
+                    "\n[yellow]R2 endpoint format:[/yellow] "
+                    "https://<account_id>.r2.cloudflarestorage.com"
+                )
+                existing_config["OPENSENSOR_STORAGE_ENDPOINT"] = typer.prompt("R2 endpoint URL")
+            elif provider == "minio":
+                existing_config["OPENSENSOR_STORAGE_ENDPOINT"] = typer.prompt(
+                    "MinIO endpoint URL", default="http://localhost:9000"
+                )
+
+            # S3-compatible credentials
+            existing_config["OPENSENSOR_AWS_ACCESS_KEY_ID"] = typer.prompt("Access Key ID")
+            existing_config["OPENSENSOR_AWS_SECRET_ACCESS_KEY"] = typer.prompt(
+                "Secret Access Key", hide_input=True
+            )
 
     # Write configuration
     write_env_file(env_file, existing_config, final_station_id)
@@ -518,7 +588,12 @@ def info():
 
         console.print(f"  Station ID: [cyan]{station_id}[/cyan]")
         console.print(f"  Output: [cyan]{output_dir}[/cyan]")
-        console.print(f"  Cloud sync: [cyan]{'Enabled' if sync_enabled else 'Disabled'}[/cyan]")
+        if sync_enabled:
+            provider = config.get("OPENSENSOR_STORAGE_PROVIDER", "s3")
+            bucket = config.get("OPENSENSOR_STORAGE_BUCKET", "")
+            console.print(f"  Cloud sync: [cyan]Enabled ({provider}: {bucket})[/cyan]")
+        else:
+            console.print("  Cloud sync: [cyan]Disabled[/cyan]")
         console.print(
             f"  Health monitoring: [cyan]{'Enabled' if health_enabled else 'Disabled'}[/cyan]"
         )
@@ -584,7 +659,8 @@ def sync(
     """
     Manually sync data to cloud storage.
 
-    Uploads local parquet files to configured S3/MinIO bucket.
+    Uploads local parquet files to configured cloud storage
+    (S3, R2, GCS, Azure, MinIO, Wasabi, Backblaze, Hetzner).
     """
     print_banner()
     console.print("[bold]Syncing to cloud...[/bold]\n")

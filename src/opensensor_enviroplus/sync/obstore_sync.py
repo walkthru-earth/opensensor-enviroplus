@@ -1,22 +1,42 @@
 """
 Cloud storage sync using obstore (modern Rust-based object store library).
-Supports S3, GCS, Azure, and more with high performance.
+Supports multiple providers: S3, GCS, Azure, and S3-compatible services.
+
+Supported providers:
+- s3: AWS S3
+- r2: Cloudflare R2 (S3-compatible, no egress fees)
+- gcs: Google Cloud Storage
+- azure: Azure Blob Storage
+- minio: MinIO (S3-compatible, self-hosted)
+- wasabi: Wasabi (S3-compatible, affordable)
+- backblaze: Backblaze B2 (S3-compatible)
+- hetzner: Hetzner Object Storage (S3-compatible)
 
 Features:
 - Incremental sync (only uploads new/modified files)
 - Offline-first (works without internet, syncs when available)
-- Metadata comparison (size + last_modified)
+- Content-based comparison (ETag/MD5)
 - Bandwidth efficient
 """
 
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
-from obstore.store import S3Store, from_url
+from obstore.store import AzureStore, GCSStore, S3Store
 
 from opensensor_enviroplus.config.settings import StorageConfig
 from opensensor_enviroplus.utils.logging import log_error, log_status
+
+# Provider endpoint templates for S3-compatible services
+S3_COMPATIBLE_ENDPOINTS = {
+    "r2": "https://{account_id}.r2.cloudflarestorage.com",
+    "wasabi": "https://s3.{region}.wasabisys.com",
+    "backblaze": "https://s3.{region}.backblazeb2.com",
+    "hetzner": "https://{region}.your-objectstorage.com",
+    "minio": None,  # User provides endpoint
+}
 
 
 class ObstoreSync:
@@ -28,12 +48,22 @@ class ObstoreSync:
     - Better memory efficiency
     - Unified API for S3, GCS, Azure
     - Built in Rust for performance
+
+    Supported providers:
+    - s3: AWS S3 (native)
+    - r2: Cloudflare R2 (S3-compatible)
+    - gcs: Google Cloud Storage (native)
+    - azure: Azure Blob Storage (native)
+    - minio: MinIO (S3-compatible)
+    - wasabi: Wasabi (S3-compatible)
+    - backblaze: Backblaze B2 (S3-compatible)
+    - hetzner: Hetzner Object Storage (S3-compatible)
     """
 
     def __init__(self, config: StorageConfig, logger: logging.Logger):
         self.config = config
         self.logger = logger
-        self.store: S3Store | None = None
+        self.store: S3Store | GCSStore | AzureStore | None = None
         self.remote_cache: dict[str, dict] = {}  # Cache of remote file metadata
         self.is_offline = False  # Track offline state
 
@@ -41,43 +71,149 @@ class ObstoreSync:
             self._init_store()
 
     def _init_store(self) -> None:
-        """Initialize object store connection using from_url with prefix support."""
+        """Initialize object store based on configured provider."""
+        provider = self.config.storage_provider.lower()
+
         try:
-            # Build S3 URL with prefix for proper IAM scoping
-            # Example: s3://bucket/prefix/path -> all operations scoped to prefix
-            bucket = self.config.storage_bucket
-            url = f"s3://{bucket}"
+            if provider == "gcs":
+                self._init_gcs()
+            elif provider == "azure":
+                self._init_azure()
+            else:
+                # S3 and all S3-compatible providers
+                self._init_s3_compatible(provider)
 
-            # Include prefix in URL for automatic scoping (IAM policies)
-            if self.config.storage_prefix:
-                # Strip leading/trailing slashes for clean URL construction
-                prefix = self.config.storage_prefix.strip("/")
-                url = f"{url}/{prefix}"
-
-            # Configure credentials via environment or config
-            config_dict = {}
-            if self.config.aws_access_key_id:
-                config_dict["aws_access_key_id"] = self.config.aws_access_key_id
-            if self.config.aws_secret_access_key:
-                config_dict["aws_secret_access_key"] = self.config.aws_secret_access_key
-            if self.config.storage_region:
-                config_dict["aws_region"] = self.config.storage_region
-            if self.config.storage_endpoint:
-                config_dict["aws_endpoint"] = self.config.storage_endpoint
-
-            # Create store from URL - prefix automatically extracted from URL path
-            self.store = from_url(url, config=config_dict)
-
-            log_status(
-                f"Connected to {self.config.storage_provider}: {bucket}"
-                + (f"/{self.config.storage_prefix}" if self.config.storage_prefix else ""),
-                self.logger,
-                "CLOUD",
-            )
+            if self.store:
+                bucket = self.config.storage_bucket
+                prefix = f"/{self.config.storage_prefix}" if self.config.storage_prefix else ""
+                log_status(f"Connected to {provider}: {bucket}{prefix}", self.logger, "CLOUD")
 
         except Exception as e:
-            log_error(e, self.logger, "Failed to initialize object store")
+            log_error(e, self.logger, f"Failed to initialize {provider} store")
             self.store = None
+
+    def _init_s3_compatible(self, provider: str) -> None:
+        """Initialize S3 or S3-compatible store (R2, MinIO, Wasabi, etc.)."""
+        bucket = self.config.storage_bucket
+        if not bucket:
+            raise ValueError("storage_bucket is required")
+
+        # Build config dict
+        config_dict: dict[str, Any] = {}
+
+        # Credentials
+        if self.config.aws_access_key_id:
+            config_dict["aws_access_key_id"] = self.config.aws_access_key_id
+        if self.config.aws_secret_access_key:
+            config_dict["aws_secret_access_key"] = self.config.aws_secret_access_key
+
+        # Region
+        if self.config.storage_region:
+            config_dict["aws_region"] = self.config.storage_region
+
+        # Endpoint (custom or provider-specific)
+        endpoint = self._get_endpoint(provider)
+        if endpoint:
+            config_dict["aws_endpoint"] = endpoint
+
+        # For non-AWS S3-compatible services, disable virtual hosted style
+        if provider in ("r2", "minio", "wasabi", "backblaze", "hetzner"):
+            config_dict["aws_virtual_hosted_style_request"] = "false"
+
+        # Allow HTTP for local MinIO
+        if provider == "minio" and endpoint and endpoint.startswith("http://"):
+            config_dict["aws_allow_http"] = "true"
+
+        # Build URL with prefix
+        url = f"s3://{bucket}"
+        if self.config.storage_prefix:
+            prefix = self.config.storage_prefix.strip("/")
+            url = f"{url}/{prefix}"
+
+        self.store = S3Store.from_url(url, config=config_dict)
+
+    def _init_gcs(self) -> None:
+        """Initialize Google Cloud Storage store."""
+        bucket = self.config.storage_bucket
+        if not bucket:
+            raise ValueError("storage_bucket is required")
+
+        config_dict: dict[str, Any] = {}
+
+        # Service account credentials
+        if self.config.gcs_service_account_path:
+            config_dict["google_service_account_path"] = self.config.gcs_service_account_path
+
+        # Build URL with prefix
+        url = f"gs://{bucket}"
+        if self.config.storage_prefix:
+            prefix = self.config.storage_prefix.strip("/")
+            url = f"{url}/{prefix}"
+
+        self.store = GCSStore.from_url(url, config=config_dict)
+
+    def _init_azure(self) -> None:
+        """Initialize Azure Blob Storage store."""
+        container = self.config.storage_bucket
+        if not container:
+            raise ValueError("storage_bucket (container name) is required")
+
+        account = self.config.azure_storage_account
+        if not account:
+            raise ValueError("azure_storage_account is required")
+
+        config_dict: dict[str, Any] = {
+            "azure_storage_account_name": account,
+        }
+
+        # Credentials (account key or SAS token)
+        if self.config.azure_storage_key:
+            config_dict["azure_storage_account_key"] = self.config.azure_storage_key
+        elif self.config.azure_sas_token:
+            config_dict["azure_storage_sas_key"] = self.config.azure_sas_token
+
+        # Build URL with prefix
+        # Azure URL format: az://container or azure://account.blob.core.windows.net/container
+        url = f"az://{container}"
+        if self.config.storage_prefix:
+            prefix = self.config.storage_prefix.strip("/")
+            url = f"{url}/{prefix}"
+
+        self.store = AzureStore.from_url(url, config=config_dict)
+
+    def _get_endpoint(self, provider: str) -> str | None:
+        """Get endpoint URL for provider."""
+        # User-provided endpoint takes precedence
+        if self.config.storage_endpoint:
+            return self.config.storage_endpoint
+
+        # Provider-specific default endpoints
+        if provider == "s3":
+            return None  # AWS S3 uses default endpoint
+
+        if provider == "r2":
+            # R2 requires account_id in endpoint - user must provide full endpoint
+            # Format: https://{account_id}.r2.cloudflarestorage.com
+            self.logger.warning(
+                "R2 requires OPENSENSOR_STORAGE_ENDPOINT with your account ID. "
+                "Format: https://<account_id>.r2.cloudflarestorage.com"
+            )
+            return None
+
+        if provider == "wasabi":
+            region = self.config.storage_region or "us-east-1"
+            return f"https://s3.{region}.wasabisys.com"
+
+        if provider == "backblaze":
+            region = self.config.storage_region or "us-west-004"
+            return f"https://s3.{region}.backblazeb2.com"
+
+        if provider == "hetzner":
+            region = self.config.storage_region or "fsn1"
+            return f"https://{region}.your-objectstorage.com"
+
+        # MinIO and others - user must provide endpoint
+        return None
 
     def sync_directory(self, local_dir: Path) -> int:
         """

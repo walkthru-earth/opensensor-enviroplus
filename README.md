@@ -11,7 +11,7 @@ Part of the [OpenSensor.Space](https://opensensor.space) network for open enviro
 - **Memory Efficient**: Optimized for Raspberry Pi with limited RAM
 - **CLI-First**: Simple Python commands replace bash scripts
 - **Smart Logging**: Rich console output for easy debugging
-- **Cloud Sync**: Built-in sync using obstore (50% faster than boto3)
+- **Cloud Sync**: Multi-provider sync using obstore (S3, R2, GCS, Azure, MinIO, Wasabi, Backblaze, Hetzner)
 - **Prefix-based IAM**: S3 bucket access control per station
 - **Type Safe**: Pydantic settings with validation
 - **Production Ready**: Graceful error handling, automatic retries
@@ -21,7 +21,27 @@ Part of the [OpenSensor.Space](https://opensensor.space) network for open enviro
 
 ## Quick Start
 
-### Prerequisites
+### One-Line Install (Recommended)
+
+```bash
+curl -LsSf https://raw.githubusercontent.com/walkthru-earth/opensensor-enviroplus/main/install.sh | sudo bash
+```
+
+This installs everything: system dependencies, UV, opensensor-enviroplus, and configures permissions. After reboot:
+
+```bash
+cd ~/opensensor
+opensensor setup                  # Configure station
+opensensor test                   # Verify sensors
+sudo opensensor service setup     # Install as service
+```
+
+### Manual Installation
+
+<details>
+<summary>Click to expand manual installation steps</summary>
+
+#### Prerequisites
 
 ```bash
 # Update system packages
@@ -41,28 +61,36 @@ source $HOME/.local/bin/env
 
 > **Note:** The I2C interface is required for BME280, LTR559, and gas sensors. SPI is needed for the LCD display. A reboot may be required after enabling these interfaces.
 
-### Installation
+#### Install from PyPI
 
 ```bash
-# Clone the repository
+uv tool install opensensor-enviroplus
+```
+
+#### Or install from source
+
+```bash
 git clone https://github.com/walkthru-earth/opensensor-enviroplus.git
 cd opensensor-enviroplus
-
-# Install dependencies with UV
 uv sync
-
-# Activate virtual environment (optional - uv run handles this)
-source .venv/bin/activate
 ```
 
-### First Time Setup
+#### Fix Permissions (reboot required)
 
 ```bash
-sudo $(which opensensor) fix-permissions   # Fix serial permissions (reboot after)
-opensensor setup                           # Configure station ID
-opensensor test                            # Verify sensors work
-opensensor service setup                   # Install & start as service
+sudo $(which opensensor) fix-permissions
+sudo reboot
 ```
+
+#### Configure and Start
+
+```bash
+opensensor setup                  # Configure station ID
+opensensor test                   # Verify sensors work
+sudo opensensor service setup     # Install & start as service
+```
+
+</details>
 
 ## CLI Commands
 
@@ -113,13 +141,13 @@ OPENSENSOR_COMPRESSION=snappy           # Fast compression (snappy, zstd, gzip)
 OPENSENSOR_SYNC_ENABLED=true
 OPENSENSOR_SYNC_INTERVAL_MINUTES=15
 
-# S3/MinIO storage
+# Storage provider (s3, r2, gcs, azure, minio, wasabi, backblaze, hetzner)
+OPENSENSOR_STORAGE_PROVIDER=s3
 OPENSENSOR_STORAGE_BUCKET=my-sensor-bucket
 OPENSENSOR_STORAGE_PREFIX=sensors/station-019ab383  # For IAM scoping
 OPENSENSOR_STORAGE_REGION=us-west-2
-OPENSENSOR_STORAGE_ENDPOINT=            # Optional: for MinIO/custom S3
 
-# AWS credentials
+# Provider credentials (see .env.example for all providers)
 OPENSENSOR_AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE
 OPENSENSOR_AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCY
 
@@ -128,7 +156,20 @@ OPENSENSOR_LOG_LEVEL=INFO
 OPENSENSOR_LOG_DIR=logs
 ```
 
-See `.env.example` for a complete template with IAM policy examples.
+See `.env.example` for a complete template with all provider configurations and IAM policy examples.
+
+### Supported Cloud Storage Providers
+
+| Provider | Type | Notes |
+|----------|------|-------|
+| `s3` | AWS S3 | Native support |
+| `r2` | Cloudflare R2 | S3-compatible, no egress fees |
+| `gcs` | Google Cloud Storage | Native support |
+| `azure` | Azure Blob Storage | Native support |
+| `minio` | MinIO | S3-compatible, self-hosted |
+| `wasabi` | Wasabi | S3-compatible, affordable |
+| `backblaze` | Backblaze B2 | S3-compatible |
+| `hetzner` | Hetzner Object Storage | S3-compatible |
 
 ## Architecture
 
@@ -176,7 +217,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed diagrams and scalability ana
 | Storage | Partitioned Parquet | Hive-partitioned Parquet |
 | Configuration | bash scripts + env vars | Pydantic Settings + .env |
 | Setup | install.sh | `opensensor setup` CLI |
-| Cloud sync | rclone (process spawn) | obstore (Rust, 50% faster) |
+| Cloud sync | rclone (process spawn) | obstore (8 providers, Rust) |
 | IAM policies | N/A | Prefix-based scoping |
 | Logging | print statements | Rich + structured logging |
 | Memory usage | Higher (pandas) | 50% lower (Polars streaming) |

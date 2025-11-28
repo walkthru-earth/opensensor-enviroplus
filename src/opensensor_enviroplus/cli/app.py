@@ -1,6 +1,15 @@
 """
 Modern CLI for opensensor-enviroplus using Typer.
 Replaces bash scripts with simple Python commands.
+
+Commands:
+  setup           Initial configuration
+  start           Start collector (foreground, for debugging)
+  test            Test sensors with live table
+  info            Show config, sensors, and data stats
+  sync            Manual cloud sync
+  fix-permissions Fix sensor permissions (requires sudo)
+  service         Manage systemd service (setup, status, logs, etc.)
 """
 
 import importlib.metadata
@@ -9,6 +18,7 @@ from pathlib import Path
 
 import typer
 from rich.console import Console
+from rich.table import Table
 
 from opensensor_enviroplus.collector.polars_collector import PolarsSensorCollector
 from opensensor_enviroplus.config.settings import AppConfig, SensorConfig, StorageConfig
@@ -38,6 +48,77 @@ def print_banner():
     console.print("\n[bold cyan]OpenSensor.Space[/bold cyan] | Enviro+ Data Collector\n")
 
 
+def _check_sensor_availability() -> dict[str, str]:
+    """
+    Check which sensors are available and return their status.
+    Returns a dict mapping sensor name to status string (with Rich markup).
+    """
+    sensors_status = {}
+
+    # Try to import sensor libraries
+    try:
+        import ads1015
+        import gpiod
+        import gpiodevice
+        from bme280 import BME280
+        from gpiod.line import Direction, Value
+        from ltr559 import LTR559
+        from pms5003 import PMS5003
+        from smbus2 import SMBus
+    except ImportError:
+        return {
+            "BME280": "[yellow]N/A[/yellow] (not on Pi)",
+            "MICS6814": "[yellow]N/A[/yellow] (not on Pi)",
+            "LTR559": "[yellow]N/A[/yellow] (not on Pi)",
+            "PMS5003": "[yellow]N/A[/yellow] (not on Pi)",
+        }
+
+    # Constants for gas sensor
+    MICS6814_GAIN = 6.144
+    MICS6814_I2C_ADDR = 0x49
+
+    # BME280
+    try:
+        BME280(i2c_dev=SMBus(1))
+        sensors_status["BME280"] = "[green]OK[/green]"
+    except Exception as e:
+        sensors_status["BME280"] = f"[red]FAIL[/red] ({e})"
+
+    # Gas sensor (ADS1015/ADS1115)
+    try:
+        ads1015.I2C_ADDRESS_DEFAULT = MICS6814_I2C_ADDR
+        gas_adc = ads1015.ADS1015(i2c_addr=MICS6814_I2C_ADDR)
+        adc_type = gas_adc.detect_chip_type()
+        gas_adc.set_mode("single")
+        gas_adc.set_programmable_gain(MICS6814_GAIN)
+        if adc_type == "ADS1115":
+            gas_adc.set_sample_rate(128)
+        else:
+            gas_adc.set_sample_rate(1600)
+        # Enable heater
+        outh = gpiod.LineSettings(direction=Direction.OUTPUT, output_value=Value.ACTIVE)
+        gpiodevice.get_pin("GPIO24", "EnviroPlus", outh)
+        sensors_status["MICS6814"] = f"[green]OK[/green] ({adc_type})"
+    except Exception as e:
+        sensors_status["MICS6814"] = f"[red]FAIL[/red] ({e})"
+
+    # LTR559
+    try:
+        LTR559()
+        sensors_status["LTR559"] = "[green]OK[/green]"
+    except Exception as e:
+        sensors_status["LTR559"] = f"[red]FAIL[/red] ({e})"
+
+    # PMS5003
+    try:
+        PMS5003()
+        sensors_status["PMS5003"] = "[green]OK[/green]"
+    except Exception as e:
+        sensors_status["PMS5003"] = f"[red]FAIL[/red] ({e})"
+
+    return sensors_status
+
+
 @app.command()
 def setup(
     station_id: str | None = typer.Option(
@@ -54,8 +135,7 @@ def setup(
     """
     Setup and configure opensensor-enviroplus.
 
-    If a .env file already exists, it will be preserved and only missing
-    values will be added. Use --force to overwrite completely.
+    Creates a .env configuration file with station ID and settings.
     """
     print_banner()
     console.print("[bold]Setup Configuration[/bold]\n")
@@ -80,7 +160,7 @@ def setup(
             if action == "keep":
                 console.print("\n[green]Keeping existing configuration.[/green]")
                 ensure_directories(existing_config.get("OPENSENSOR_OUTPUT_DIR", "output"), "logs")
-                console.print("\nRun [cyan]opensensor config[/cyan] to view current settings.\n")
+                console.print("\nRun [cyan]opensensor info[/cyan] to view current settings.\n")
                 return
             elif action == "replace":
                 existing_config = {}  # Start fresh
@@ -158,19 +238,18 @@ def setup(
 
     console.print("\n[bold green]Setup complete![/bold green]")
     console.print("\nNext steps:")
-    console.print("  1. Review config: [cyan]opensensor config[/cyan]")
-    console.print("  2. Start collector: [cyan]opensensor start[/cyan]")
-    console.print("  3. Or setup service: [cyan]opensensor service setup[/cyan]\n")
+    console.print("  1. Test sensors: [cyan]opensensor test[/cyan]")
+    console.print("  2. View info: [cyan]opensensor info[/cyan]")
+    console.print("  3. Setup service: [cyan]opensensor service setup[/cyan]\n")
 
 
 @app.command()
-def start(
-    foreground: bool = typer.Option(
-        False, "--foreground", "-f", help="Run in foreground (default: background)"
-    ),
-):
+def start():
     """
-    Start the sensor data collector.
+    Start the sensor data collector (foreground).
+
+    Runs in foreground for debugging. For production, use:
+    opensensor service setup
     """
     print_banner()
     console.print("[bold]Starting data collector...[/bold]\n")
@@ -185,6 +264,13 @@ def start(
         sensor_config.output_dir.mkdir(parents=True, exist_ok=True)
         app_config.log_dir.mkdir(parents=True, exist_ok=True)
 
+        # Check and display sensor availability at startup
+        console.print("[bold]Sensors:[/bold]")
+        sensors_status = _check_sensor_availability()
+        for sensor, status in sensors_status.items():
+            console.print(f"  {sensor}: {status}")
+        console.print()
+
         # Setup logging
         log_file = app_config.log_dir / "opensensor.log"
         logger = setup_logging(level=app_config.log_level, log_file=log_file)
@@ -195,306 +281,35 @@ def start(
         )
 
         # Run collector
-        console.print(" Collector started\n")
-        console.print(f" Output: [cyan]{sensor_config.output_dir}[/cyan]")
+        console.print(f"Output: [cyan]{sensor_config.output_dir}[/cyan]")
         console.print(f"Logs: [cyan]{log_file}[/cyan]")
-        console.print("\nPress Ctrl+C to stop\n")
+        console.print("\n[dim]Press Ctrl+C to stop[/dim]\n")
 
         collector.run()
 
     except FileNotFoundError:
-        console.print("[red]ERROR: Configuration not found. Run 'opensensor setup' first.[/red]")
+        console.print("[red]ERROR: Configuration not found.[/red]")
+        console.print("Run [cyan]opensensor setup[/cyan] first.\n")
         sys.exit(1)
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Stopped by user[/yellow]\n")
     except Exception as e:
-        console.print(f"[red]ERROR: Error: {e}[/red]")
+        console.print(f"[red]ERROR: {e}[/red]")
         sys.exit(1)
 
 
 @app.command()
-def sync(
-    directory: Path | None = typer.Option(None, help="Directory to sync (default: from config)"),
+def test(
+    warmup: int = typer.Option(5, "--warmup", "-w", help="Warm-up time in seconds"),
+    readings: int = typer.Option(6, "--readings", "-r", help="Number of readings"),
+    interval: float = typer.Option(10.0, "--interval", "-i", help="Interval between readings"),
 ):
     """
-    Manually sync data to cloud storage.
-    """
-    console.print("[bold blue]Syncing to cloud storage...[/bold blue]\n")
+    Test sensors with live readings table.
 
-    try:
-        # Load configuration
-        sensor_config = SensorConfig()
-        storage_config = StorageConfig()
-        app_config = AppConfig()
-
-        if not storage_config.sync_enabled:
-            console.print("[yellow]WARNING:  Cloud sync is not enabled in configuration[/yellow]")
-            sys.exit(1)
-
-        # Setup logging
-        logger = setup_logging(level=app_config.log_level)
-
-        # Create sync client
-        sync_client = ObstoreSync(config=storage_config, logger=logger)
-
-        # Sync directory
-        sync_dir = directory or sensor_config.output_dir
-        files_synced = sync_client.sync_directory(sync_dir)
-
-        if files_synced > 0:
-            console.print(f"\n[green] Synced {files_synced} files[/green]")
-        else:
-            console.print("\n[yellow]No files to sync[/yellow]")
-
-    except Exception as e:
-        console.print(f"[red]ERROR: Sync failed: {e}[/red]")
-        sys.exit(1)
-
-
-@app.command()
-def config():
-    """
-    View current configuration.
-    """
-    env_file = Path(".env")
-
-    if not env_file.exists():
-        console.print("[yellow]WARNING: Configuration not found.[/yellow]")
-        console.print("\n[dim]To configure, either:[/dim]")
-        console.print("  1. Run: [cyan]uv run opensensor setup[/cyan]")
-        console.print("  2. Create a .env file manually with at minimum:")
-        console.print("     [cyan]OPENSENSOR_STATION_ID=<your-uuid-v7>[/cyan]\n")
-        sys.exit(1)
-
-    console.print("\n[bold blue]Current Configuration[/bold blue]\n")
-
-    # Read and display config
-    config_text = env_file.read_text()
-    for line in config_text.split("\n"):
-        if line.startswith("#") or not line.strip():
-            console.print(f"[dim]{line}[/dim]")
-        elif "SECRET" in line or "PASSWORD" in line:
-            key, _ = line.split("=", 1)
-            console.print(f"{key}=[dim]********[/dim]")
-        else:
-            console.print(line)
-
-    console.print(f"\n[dim]Config file: {env_file.absolute()}[/dim]\n")
-
-
-@app.command()
-def status():
-    """
-    Check collector status and statistics.
-    """
-    console.print("\n[bold blue]OpenSensor Status[/bold blue]\n")
-
-    # Try to get output directory from config, fallback to default
-    try:
-        sensor_config = SensorConfig()
-        output_dir = sensor_config.output_dir
-    except Exception:
-        output_dir = Path("output")
-
-    # Check output directory
-    if output_dir.exists():
-        # Count files
-        parquet_files = list(output_dir.rglob("*.parquet"))
-        console.print(f"Output directory: [cyan]{output_dir}[/cyan]")
-        console.print(f"Parquet files: [green]{len(parquet_files)}[/green]")
-
-        # Calculate total size
-        total_size = sum(f.stat().st_size for f in parquet_files)
-        size_mb = total_size / (1024 * 1024)
-        console.print(f"Total size: [green]{size_mb:.2f} MB[/green]")
-    else:
-        console.print(f"[dim]Output directory: {output_dir} (not created yet)[/dim]")
-
-    # Try to get log path from config, fallback to default
-    try:
-        app_config = AppConfig()
-        log_file = app_config.log_dir / "opensensor.log"
-    except Exception:
-        log_file = Path("logs/opensensor.log")
-
-    if log_file.exists():
-        console.print(f"\nLog file: [cyan]{log_file}[/cyan]")
-        console.print(f"Log size: [green]{log_file.stat().st_size / 1024:.1f} KB[/green]")
-    else:
-        console.print(f"\n[dim]Log file: {log_file} (not created yet)[/dim]")
-
-    # Check if config exists
-    env_file = Path(".env")
-    if not env_file.exists():
-        console.print("\n[yellow]WARNING: No .env configuration found.[/yellow]")
-        console.print("[dim]To configure, either:[/dim]")
-        console.print("  1. Run: [cyan]uv run opensensor setup[/cyan]")
-        console.print("  2. Create a .env file manually with OPENSENSOR_STATION_ID")
-
-    console.print()
-
-
-@app.command()
-def logs(
-    follow: bool = typer.Option(False, "--follow", "-f", help="Follow log output"),
-    lines: int = typer.Option(50, "--lines", "-n", help="Number of lines to show"),
-):
-    """
-    View collector logs.
-    """
-    # Try to get log path from config, fallback to default
-    try:
-        app_config = AppConfig()
-        log_file = app_config.log_dir / "opensensor.log"
-    except Exception:
-        log_file = Path("logs/opensensor.log")
-
-    if not log_file.exists():
-        # Create log directory if it doesn't exist
-        log_file.parent.mkdir(parents=True, exist_ok=True)
-        console.print(
-            "[yellow]WARNING:  No log file found. Collector may not have run yet.[/yellow]"
-        )
-        console.print(f"[dim]Expected log location: {log_file}[/dim]")
-        console.print("\n[dim]To start the collector, run:[/dim]")
-        console.print("  [cyan]uv run opensensor start[/cyan]\n")
-        sys.exit(1)
-
-    if follow:
-        console.print(f"[dim]Following {log_file}... (Ctrl+C to stop)[/dim]\n")
-        # Use tail -f equivalent
-        import contextlib
-        import subprocess
-
-        with contextlib.suppress(KeyboardInterrupt):
-            subprocess.run(["tail", "-f", str(log_file)])
-    else:
-        # Show last N lines
-        log_lines = log_file.read_text().split("\n")
-        for line in log_lines[-lines:]:
-            console.print(line)
-
-
-@app.command()
-def version():
-    """
-    Show version information.
-    """
-    print_banner()
-    try:
-        package_version = importlib.metadata.version("opensensor-enviroplus")
-    except importlib.metadata.PackageNotFoundError:
-        package_version = "unknown"
-
-    console.print(f"Version: [green]{package_version}[/green]")
-    console.print("Website: [cyan]https://opensensor.space[/cyan]")
-    console.print("A walkthru.earth initiative\n")
-
-
-@app.command("fix-permissions")
-def fix_permissions():
-    """
-    Fix serial port permissions for PMS5003 sensor.
-
-    This command requires sudo and will:
-    - Add current user to dialout, i2c, and gpio groups
-    - Create udev rule for /dev/ttyAMA0 serial port access
-    - Reload udev rules
-
-    A reboot is required after running this command.
-    """
-    import grp
-    import os
-    import subprocess
-
-    print_banner()
-    console.print("[bold]Fixing sensor permissions...[/bold]\n")
-
-    # Check if running as root
-    if os.geteuid() != 0:
-        console.print("[red]ERROR: This command requires sudo.[/red]")
-        console.print("\nRun: [cyan]sudo $(which opensensor) fix-permissions[/cyan]\n")
-        sys.exit(1)
-
-    # Get the actual user (not root)
-    user = os.environ.get("SUDO_USER") or os.environ.get("USER")
-    if not user or user == "root":
-        console.print("[red]ERROR: Could not determine actual user.[/red]")
-        console.print("Please run with sudo from a regular user account.\n")
-        sys.exit(1)
-
-    console.print(f"User: [cyan]{user}[/cyan]\n")
-
-    # Add user to required groups
-    groups = ["dialout", "i2c", "gpio"]
-    for group in groups:
-        try:
-            # Check if group exists
-            grp.getgrnam(group)
-            result = subprocess.run(
-                ["usermod", "-aG", group, user],
-                capture_output=True,
-                text=True,
-            )
-            if result.returncode == 0:
-                console.print(f"[green]Added {user} to {group} group[/green]")
-            else:
-                console.print(
-                    f"[yellow]Warning: Could not add to {group}: {result.stderr}[/yellow]"
-                )
-        except KeyError:
-            console.print(f"[dim]Skipping {group} (group does not exist)[/dim]")
-
-    # Create udev rule for PMS5003 serial port
-    udev_rule = 'KERNEL=="ttyAMA0", GROUP="dialout", MODE="0660"'
-    udev_file = Path("/etc/udev/rules.d/99-pms5003.rules")
-
-    try:
-        udev_file.write_text(udev_rule + "\n")
-        console.print(f"\n[green]Created udev rule:[/green] {udev_file}")
-        console.print(f"  [dim]{udev_rule}[/dim]")
-    except OSError as e:
-        console.print(f"[red]ERROR: Could not create udev rule: {e}[/red]")
-        sys.exit(1)
-
-    # Reload udev rules
-    console.print("\n[dim]Reloading udev rules...[/dim]")
-    result = subprocess.run(
-        ["udevadm", "control", "--reload-rules"],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode == 0:
-        console.print("[green]Udev rules reloaded[/green]")
-    else:
-        console.print(f"[yellow]Warning: {result.stderr}[/yellow]")
-
-    # Trigger udev for immediate effect (if device exists)
-    subprocess.run(
-        ["udevadm", "trigger", "--subsystem-match=tty"],
-        capture_output=True,
-    )
-
-    console.print("\n[bold green]Permissions fixed![/bold green]")
-    console.print("\n[yellow]IMPORTANT: You must reboot for group changes to take effect.[/yellow]")
-    console.print("\nRun: [cyan]sudo reboot[/cyan]\n")
-
-
-@app.command("test-sensors")
-def test_sensors(
-    warmup: int = typer.Option(3, "--warmup", "-w", help="Warm-up time in seconds before reading"),
-    readings: int = typer.Option(3, "--readings", "-r", help="Number of readings to take"),
-    interval: float = typer.Option(
-        2.0, "--interval", "-i", help="Interval between readings in seconds"
-    ),
-):
-    """
-    Test sensors with warm-up delay and display readings in a table.
-
-    Initializes all sensors, waits for warm-up, then displays
-    a formatted table with sensor readings.
+    Initializes sensors, warms up, then displays live readings.
     """
     import time
-
-    from rich.table import Table
 
     print_banner()
     console.print("[bold]Testing Sensors[/bold]\n")
@@ -510,10 +325,9 @@ def test_sensors(
         from pms5003 import PMS5003, ReadTimeoutError
         from smbus2 import SMBus
     except ImportError as e:
-        console.print(f"[red]ERROR: Sensor libraries not available: {e}[/red]")
-        console.print(
-            "\n[dim]This command must be run on a Raspberry Pi with sensors connected.[/dim]\n"
-        )
+        console.print("[red]ERROR: Sensor libraries not available[/red]")
+        console.print(f"[dim]{e}[/dim]")
+        console.print("\n[yellow]This command must run on a Raspberry Pi with sensors.[/yellow]\n")
         sys.exit(1)
 
     # Constants for gas sensor
@@ -526,20 +340,22 @@ def test_sensors(
         except ZeroDivisionError:
             return 0.0
 
-    # Initialize sensors
-    sensors_status = {}
+    # Initialize sensors and build status table
+    sensors_table = Table(title="Sensor Status", show_header=True)
+    sensors_table.add_column("Sensor", style="cyan")
+    sensors_table.add_column("Status")
+    sensors_table.add_column("Description", style="dim")
 
     # BME280
     bme280 = None
     try:
         bme280 = BME280(i2c_dev=SMBus(1))
-        sensors_status["BME280"] = "[green]OK[/green]"
+        sensors_table.add_row("BME280", "[green]OK[/green]", "Temperature, Humidity, Pressure")
     except Exception as e:
-        sensors_status["BME280"] = f"[red]Failed: {e}[/red]"
+        sensors_table.add_row("BME280", "[red]FAIL[/red]", str(e)[:40])
 
     # Gas sensor (ADS1015/ADS1115)
     gas_adc = None
-    adc_type = "N/A"
     try:
         ads1015.I2C_ADDRESS_DEFAULT = MICS6814_I2C_ADDR
         gas_adc = ads1015.ADS1015(i2c_addr=MICS6814_I2C_ADDR)
@@ -553,46 +369,47 @@ def test_sensors(
         # Enable heater
         outh = gpiod.LineSettings(direction=Direction.OUTPUT, output_value=Value.ACTIVE)
         gpiodevice.get_pin("GPIO24", "EnviroPlus", outh)
-        sensors_status["MICS6814"] = f"[green]OK ({adc_type})[/green]"
+        sensors_table.add_row(
+            "MICS6814", f"[green]OK[/green] ({adc_type})", "Gas sensor (Ox, Red, NH3)"
+        )
     except Exception as e:
-        sensors_status["MICS6814"] = f"[red]Failed: {e}[/red]"
+        sensors_table.add_row("MICS6814", "[red]FAIL[/red]", str(e)[:40])
 
     # LTR559
     ltr559 = None
     try:
         ltr559 = LTR559()
-        sensors_status["LTR559"] = "[green]OK[/green]"
+        sensors_table.add_row("LTR559", "[green]OK[/green]", "Light and Proximity")
     except Exception as e:
-        sensors_status["LTR559"] = f"[red]Failed: {e}[/red]"
+        sensors_table.add_row("LTR559", "[red]FAIL[/red]", str(e)[:40])
 
     # PMS5003
     pms5003 = None
     try:
         pms5003 = PMS5003()
-        sensors_status["PMS5003"] = "[green]OK[/green]"
+        sensors_table.add_row(
+            "PMS5003", "[green]OK[/green]", "Particulate Matter (PM1, PM2.5, PM10)"
+        )
     except Exception as e:
-        sensors_status["PMS5003"] = f"[red]Failed: {e}[/red]"
+        sensors_table.add_row("PMS5003", "[red]FAIL[/red]", str(e)[:40])
 
-    # Show initialization status
-    console.print("[bold]Sensor Initialization:[/bold]")
-    for sensor, status in sensors_status.items():
-        console.print(f"  {sensor}: {status}")
+    console.print(sensors_table)
 
     # Check if any sensors available
     if not any([bme280, gas_adc, ltr559, pms5003]):
-        console.print("\n[red]ERROR: No sensors could be initialized.[/red]")
-        console.print("[dim]Check I2C/SPI interfaces and wiring.[/dim]\n")
+        console.print("\n[red]ERROR: No sensors initialized.[/red]")
+        console.print("[dim]Check I2C/SPI interfaces: sudo raspi-config[/dim]\n")
         sys.exit(1)
 
     # Warm-up countdown
-    console.print(f"\n[yellow]Warming up sensors ({warmup}s)...[/yellow]")
+    console.print(f"\n[yellow]Warming up ({warmup}s)...[/yellow]", end="")
     for i in range(warmup, 0, -1):
-        console.print(f"  [dim]{i}...[/dim]", end="\r")
+        console.print(f" {i}", end="", style="dim")
         time.sleep(1)
-    console.print("  [green]Ready![/green]   ")
+    console.print(" [green]Ready![/green]\n")
 
     # Take readings
-    console.print(f"\n[bold]Taking {readings} readings (every {interval}s):[/bold]\n")
+    console.print(f"[bold]Taking {readings} readings (every {interval}s):[/bold]\n")
 
     all_readings = []
 
@@ -602,13 +419,13 @@ def test_sensors(
         # BME280 readings
         if bme280:
             try:
-                reading["Temp (°C)"] = f"{bme280.get_temperature():.1f}"
-                reading["Humidity (%)"] = f"{bme280.get_humidity():.1f}"
-                reading["Pressure (hPa)"] = f"{bme280.get_pressure():.1f}"
+                reading["Temp °C"] = f"{bme280.get_temperature():.1f}"
+                reading["Hum %"] = f"{bme280.get_humidity():.1f}"
+                reading["hPa"] = f"{bme280.get_pressure():.0f}"
             except Exception:
-                reading["Temp (°C)"] = "ERR"
-                reading["Humidity (%)"] = "ERR"
-                reading["Pressure (hPa)"] = "ERR"
+                reading["Temp °C"] = "-"
+                reading["Hum %"] = "-"
+                reading["hPa"] = "-"
 
         # Gas sensor readings
         if gas_adc:
@@ -616,43 +433,43 @@ def test_sensors(
                 ox = gas_adc.get_voltage("in0/gnd")
                 red = gas_adc.get_voltage("in1/gnd")
                 nh3 = gas_adc.get_voltage("in2/gnd")
-                reading["Oxidising (kΩ)"] = f"{voltage_to_resistance(ox) / 1000:.1f}"
-                reading["Reducing (kΩ)"] = f"{voltage_to_resistance(red) / 1000:.1f}"
-                reading["NH3 (kΩ)"] = f"{voltage_to_resistance(nh3) / 1000:.1f}"
+                reading["Ox kΩ"] = f"{voltage_to_resistance(ox) / 1000:.1f}"
+                reading["Red kΩ"] = f"{voltage_to_resistance(red) / 1000:.1f}"
+                reading["NH3 kΩ"] = f"{voltage_to_resistance(nh3) / 1000:.1f}"
             except Exception:
-                reading["Oxidising (kΩ)"] = "ERR"
-                reading["Reducing (kΩ)"] = "ERR"
-                reading["NH3 (kΩ)"] = "ERR"
+                reading["Ox kΩ"] = "-"
+                reading["Red kΩ"] = "-"
+                reading["NH3 kΩ"] = "-"
 
         # Light sensor readings
         if ltr559:
             try:
-                reading["Lux"] = f"{ltr559.get_lux():.1f}"
-                reading["Proximity"] = f"{ltr559.get_proximity()}"
+                reading["Lux"] = f"{ltr559.get_lux():.0f}"
+                reading["Prox"] = f"{ltr559.get_proximity()}"
             except Exception:
-                reading["Lux"] = "ERR"
-                reading["Proximity"] = "ERR"
+                reading["Lux"] = "-"
+                reading["Prox"] = "-"
 
         # Particulate sensor readings
         if pms5003:
             try:
                 pm = pms5003.read()
-                reading["PM1.0"] = f"{pm.pm_ug_per_m3(1.0)}"
+                reading["PM1"] = f"{pm.pm_ug_per_m3(1.0)}"
                 reading["PM2.5"] = f"{pm.pm_ug_per_m3(2.5)}"
                 reading["PM10"] = f"{pm.pm_ug_per_m3(10)}"
             except ReadTimeoutError:
-                reading["PM1.0"] = "TIMEOUT"
-                reading["PM2.5"] = "TIMEOUT"
-                reading["PM10"] = "TIMEOUT"
+                reading["PM1"] = "..."
+                reading["PM2.5"] = "..."
+                reading["PM10"] = "..."
             except Exception:
-                reading["PM1.0"] = "ERR"
-                reading["PM2.5"] = "ERR"
-                reading["PM10"] = "ERR"
+                reading["PM1"] = "-"
+                reading["PM2.5"] = "-"
+                reading["PM10"] = "-"
 
         all_readings.append(reading)
 
         # Build and display table
-        table = Table(title=f"Sensor Readings ({reading_num}/{readings})")
+        table = Table(title=f"Readings ({reading_num}/{readings})")
 
         # Add columns based on what sensors we have
         if all_readings:
@@ -666,14 +483,207 @@ def test_sensors(
 
         if reading_num < readings:
             time.sleep(interval)
-            # Clear previous table for next iteration (move cursor up)
-            # This creates a nice "live" effect
             console.print()
 
     console.print("\n[bold green]Test complete![/bold green]")
-    console.print(
-        "\nTo start continuous collection, run: [cyan]opensensor start --foreground[/cyan]\n"
-    )
+    console.print("\nNext: [cyan]opensensor service setup[/cyan] for continuous collection\n")
+
+
+@app.command()
+def info():
+    """
+    Show configuration, sensors, and data statistics.
+
+    Displays station config, sensor status, and collected data info.
+    """
+    print_banner()
+
+    # Version info
+    try:
+        package_version = importlib.metadata.version("opensensor-enviroplus")
+    except importlib.metadata.PackageNotFoundError:
+        package_version = "dev"
+    console.print(f"Version: [green]{package_version}[/green]\n")
+
+    # Configuration
+    env_file = Path(".env")
+    console.print("[bold]Configuration:[/bold]")
+
+    if env_file.exists():
+        config = parse_env_file(env_file)
+        station_id = config.get("OPENSENSOR_STATION_ID", "Not set")
+        output_dir = config.get("OPENSENSOR_OUTPUT_DIR", "output")
+        sync_enabled = config.get("OPENSENSOR_SYNC_ENABLED", "false").lower() == "true"
+        health_enabled = config.get("OPENSENSOR_HEALTH_ENABLED", "true").lower() == "true"
+
+        console.print(f"  Station ID: [cyan]{station_id}[/cyan]")
+        console.print(f"  Output: [cyan]{output_dir}[/cyan]")
+        console.print(f"  Cloud sync: [cyan]{'Enabled' if sync_enabled else 'Disabled'}[/cyan]")
+        console.print(
+            f"  Health monitoring: [cyan]{'Enabled' if health_enabled else 'Disabled'}[/cyan]"
+        )
+        console.print(f"  Config file: [dim]{env_file.absolute()}[/dim]")
+    else:
+        console.print("  [yellow]Not configured[/yellow]")
+        console.print("  Run: [cyan]opensensor setup[/cyan]")
+
+    # Sensor status
+    console.print("\n[bold]Sensors:[/bold]")
+    sensors_status = _check_sensor_availability()
+    for sensor, status in sensors_status.items():
+        console.print(f"  {sensor}: {status}")
+
+    # Data statistics
+    console.print("\n[bold]Data:[/bold]")
+    try:
+        sensor_config = SensorConfig()
+        output_dir = sensor_config.output_dir
+    except Exception:
+        output_dir = Path("output")
+
+    if output_dir.exists():
+        parquet_files = list(output_dir.rglob("*.parquet"))
+        total_size = sum(f.stat().st_size for f in parquet_files)
+        size_mb = total_size / (1024 * 1024)
+        console.print(f"  Parquet files: [green]{len(parquet_files)}[/green]")
+        console.print(f"  Total size: [green]{size_mb:.2f} MB[/green]")
+        console.print(f"  Location: [dim]{output_dir.absolute()}[/dim]")
+    else:
+        console.print("  [dim]No data collected yet[/dim]")
+
+    # Health data
+    health_dir = Path("output-health")
+    if health_dir.exists():
+        health_files = list(health_dir.rglob("*.parquet"))
+        if health_files:
+            console.print(f"  Health files: [green]{len(health_files)}[/green]")
+
+    # Service status (quick check)
+    console.print("\n[bold]Service:[/bold]")
+    try:
+        manager = ServiceManager()
+        if manager.is_installed():
+            if manager.is_active():
+                console.print("  Status: [green]Running[/green]")
+            else:
+                console.print("  Status: [yellow]Stopped[/yellow]")
+            console.print(f"  Enabled: [cyan]{'Yes' if manager.is_enabled() else 'No'}[/cyan]")
+        else:
+            console.print("  [dim]Not installed[/dim]")
+            console.print("  Run: [cyan]opensensor service setup[/cyan]")
+    except Exception:
+        console.print("  [dim]Service check unavailable[/dim]")
+
+    console.print()
+
+
+@app.command()
+def sync(
+    directory: Path | None = typer.Option(None, help="Directory to sync"),
+):
+    """
+    Manually sync data to cloud storage.
+
+    Uploads local parquet files to configured S3/MinIO bucket.
+    """
+    print_banner()
+    console.print("[bold]Syncing to cloud...[/bold]\n")
+
+    try:
+        # Load configuration
+        sensor_config = SensorConfig()
+        storage_config = StorageConfig()
+        app_config = AppConfig()
+
+        if not storage_config.sync_enabled:
+            console.print("[yellow]Cloud sync is not enabled.[/yellow]")
+            console.print("\nEnable in .env: [cyan]OPENSENSOR_SYNC_ENABLED=true[/cyan]\n")
+            sys.exit(1)
+
+        # Setup logging
+        logger = setup_logging(level=app_config.log_level)
+
+        # Create sync client
+        sync_client = ObstoreSync(config=storage_config, logger=logger)
+
+        # Sync directory
+        sync_dir = directory or sensor_config.output_dir
+        files_synced = sync_client.sync_directory(sync_dir)
+
+        if files_synced > 0:
+            console.print(f"[green]Synced {files_synced} files[/green]\n")
+        else:
+            console.print("[dim]No new files to sync[/dim]\n")
+
+    except Exception as e:
+        console.print(f"[red]ERROR: {e}[/red]\n")
+        sys.exit(1)
+
+
+@app.command("fix-permissions")
+def fix_permissions():
+    """
+    Fix serial port permissions for PMS5003 sensor.
+
+    Requires sudo. Adds user to groups and creates udev rules.
+    Reboot required after running.
+    """
+    import grp
+    import os
+    import subprocess
+
+    print_banner()
+    console.print("[bold]Fixing sensor permissions...[/bold]\n")
+
+    # Check if running as root
+    if os.geteuid() != 0:
+        console.print("[red]ERROR: Requires sudo[/red]")
+        console.print("\nRun: [cyan]sudo $(which opensensor) fix-permissions[/cyan]\n")
+        sys.exit(1)
+
+    # Get the actual user (not root)
+    user = os.environ.get("SUDO_USER") or os.environ.get("USER")
+    if not user or user == "root":
+        console.print("[red]ERROR: Could not determine user.[/red]")
+        console.print("Run with sudo from a regular user account.\n")
+        sys.exit(1)
+
+    console.print(f"User: [cyan]{user}[/cyan]\n")
+
+    # Add user to required groups
+    groups = ["dialout", "i2c", "gpio"]
+    for group in groups:
+        try:
+            grp.getgrnam(group)
+            result = subprocess.run(
+                ["usermod", "-aG", group, user],
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode == 0:
+                console.print(f"  [green]Added to {group}[/green]")
+            else:
+                console.print(f"  [yellow]Warning: {group} - {result.stderr}[/yellow]")
+        except KeyError:
+            console.print(f"  [dim]Skipped {group} (not found)[/dim]")
+
+    # Create udev rule for PMS5003 serial port
+    udev_rule = 'KERNEL=="ttyAMA0", GROUP="dialout", MODE="0660"'
+    udev_file = Path("/etc/udev/rules.d/99-pms5003.rules")
+
+    try:
+        udev_file.write_text(udev_rule + "\n")
+        console.print(f"\n[green]Created udev rule[/green]: {udev_file}")
+    except OSError as e:
+        console.print(f"[red]ERROR: {e}[/red]")
+        sys.exit(1)
+
+    # Reload udev rules
+    subprocess.run(["udevadm", "control", "--reload-rules"], capture_output=True)
+    subprocess.run(["udevadm", "trigger", "--subsystem-match=tty"], capture_output=True)
+
+    console.print("\n[bold green]Done![/bold green]")
+    console.print("\n[yellow]REBOOT REQUIRED[/yellow]: Run [cyan]sudo reboot[/cyan]\n")
 
 
 # Service management subcommand group
@@ -684,195 +694,37 @@ service_app = typer.Typer(
 app.add_typer(service_app, name="service")
 
 
-@service_app.command("install")
-def service_install():
+@service_app.command("setup")
+def service_setup():
     """
-    Install opensensor as a systemd service.
-    Creates the service file at /etc/systemd/system/opensensor.service
+    Quick setup: install + enable + start service.
+
+    One command to get the service running on boot.
     """
-    console.print("\n[bold blue]Installing systemd service...[/bold blue]\n")
+    console.print("\n[bold]Setting up opensensor service...[/bold]\n")
 
     try:
         manager = ServiceManager()
-
-        # Show what will be installed
-        console.print("[dim]Auto-detected configuration:[/dim]")
-        console.print(f"  User: [cyan]{manager.user}[/cyan]")
-        console.print(f"  Group: [cyan]{manager.group}[/cyan]")
-        console.print(f"  Project: [cyan]{manager.project_root}[/cyan]")
-        console.print(f"  Python: [cyan]{manager.python_path}[/cyan]")
-        console.print(f"  Venv: [cyan]{manager.venv_path}[/cyan]\n")
 
         # Install
+        console.print("1. Installing...")
+        console.print(f"   User: [cyan]{manager.user}[/cyan]")
+        console.print(f"   Path: [cyan]{manager.project_root}[/cyan]")
         manager.install()
 
-        console.print("[green]Service installed successfully![/green]")
-        console.print(f"Service file: [cyan]{manager.service_file}[/cyan]\n")
-        console.print("[dim]Next steps:[/dim]")
-        console.print("  Enable on boot: [cyan]sudo opensensor service enable[/cyan]")
-        console.print("  Start service: [cyan]sudo opensensor service start[/cyan]")
-        console.print("  Or do both: [cyan]sudo opensensor service setup[/cyan]\n")
-
-    except PermissionError as e:
-        console.print(f"[red]ERROR: {e}[/red]")
-        sys.exit(1)
-    except Exception as e:
-        console.print(f"[red]ERROR: Installation failed: {e}[/red]")
-        sys.exit(1)
-
-
-@service_app.command("uninstall")
-def service_uninstall():
-    """
-    Uninstall the systemd service.
-    Removes the service file from /etc/systemd/system/
-    """
-    console.print("\n[bold blue]Uninstalling systemd service...[/bold blue]\n")
-
-    try:
-        manager = ServiceManager()
-
-        if not manager.is_installed():
-            console.print("[yellow]Service is not installed[/yellow]")
-            sys.exit(0)
-
-        # Stop if running
-        if manager.is_active():
-            console.print("Stopping service...")
-            manager.stop()
-
-        # Disable if enabled
-        if manager.is_enabled():
-            console.print("Disabling service...")
-            manager.disable()
-
-        # Uninstall
-        manager.uninstall()
-
-        console.print("[green]Service uninstalled successfully![/green]\n")
-
-    except PermissionError as e:
-        console.print(f"[red]ERROR: {e}[/red]")
-        sys.exit(1)
-    except Exception as e:
-        console.print(f"[red]ERROR: Uninstallation failed: {e}[/red]")
-        sys.exit(1)
-
-
-@service_app.command("enable")
-def service_enable():
-    """
-    Enable the service to start automatically on boot.
-    """
-    try:
-        manager = ServiceManager()
-
-        if not manager.is_installed():
-            console.print(
-                "[red]ERROR: Service is not installed. Run 'sudo opensensor service install' first.[/red]"
-            )
-            sys.exit(1)
-
+        # Enable
+        console.print("2. Enabling on boot...")
         manager.enable()
-        console.print("[green]Service enabled successfully![/green]")
-        console.print("[dim]The service will now start automatically on boot[/dim]\n")
 
-    except PermissionError as e:
-        console.print(f"[red]ERROR: {e}[/red]")
-        sys.exit(1)
-    except Exception as e:
-        console.print(f"[red]ERROR: {e}[/red]")
-        sys.exit(1)
-
-
-@service_app.command("disable")
-def service_disable():
-    """
-    Disable the service from starting automatically on boot.
-    """
-    try:
-        manager = ServiceManager()
-
-        if not manager.is_installed():
-            console.print("[yellow]Service is not installed[/yellow]")
-            sys.exit(0)
-
-        manager.disable()
-        console.print("[green]Service disabled successfully![/green]")
-        console.print("[dim]The service will no longer start automatically on boot[/dim]\n")
-
-    except PermissionError as e:
-        console.print(f"[red]ERROR: {e}[/red]")
-        sys.exit(1)
-    except Exception as e:
-        console.print(f"[red]ERROR: {e}[/red]")
-        sys.exit(1)
-
-
-@service_app.command("start")
-def service_start():
-    """
-    Start the opensensor service.
-    """
-    try:
-        manager = ServiceManager()
-
-        if not manager.is_installed():
-            console.print(
-                "[red]ERROR: Service is not installed. Run 'sudo opensensor service install' first.[/red]"
-            )
-            sys.exit(1)
-
+        # Start
+        console.print("3. Starting...")
         manager.start()
-        console.print("[green]Service started successfully![/green]\n")
 
-    except PermissionError as e:
-        console.print(f"[red]ERROR: {e}[/red]")
-        sys.exit(1)
-    except Exception as e:
-        console.print(f"[red]ERROR: {e}[/red]")
-        sys.exit(1)
-
-
-@service_app.command("stop")
-def service_stop():
-    """
-    Stop the opensensor service.
-    """
-    try:
-        manager = ServiceManager()
-
-        if not manager.is_installed():
-            console.print("[yellow]Service is not installed[/yellow]")
-            sys.exit(0)
-
-        manager.stop()
-        console.print("[green]Service stopped successfully![/green]\n")
-
-    except PermissionError as e:
-        console.print(f"[red]ERROR: {e}[/red]")
-        sys.exit(1)
-    except Exception as e:
-        console.print(f"[red]ERROR: {e}[/red]")
-        sys.exit(1)
-
-
-@service_app.command("restart")
-def service_restart():
-    """
-    Restart the opensensor service.
-    """
-    try:
-        manager = ServiceManager()
-
-        if not manager.is_installed():
-            console.print(
-                "[red]ERROR: Service is not installed. Run 'sudo opensensor service install' first.[/red]"
-            )
-            sys.exit(1)
-
-        manager.restart()
-        console.print("[green]Service restarted successfully![/green]\n")
+        console.print("\n[bold green]Service running![/bold green]\n")
+        console.print("Commands:")
+        console.print("  [cyan]opensensor service status[/cyan]  - View status")
+        console.print("  [cyan]opensensor service logs[/cyan]    - View logs")
+        console.print("  [cyan]opensensor service stop[/cyan]    - Stop service\n")
 
     except PermissionError as e:
         console.print(f"[red]ERROR: {e}[/red]")
@@ -885,35 +737,29 @@ def service_restart():
 @service_app.command("status")
 def service_status():
     """
-    Show the current status of the opensensor service.
+    Show service status and recent logs.
     """
     try:
         manager = ServiceManager()
 
         if not manager.is_installed():
-            console.print("[yellow]Service is not installed[/yellow]")
-            console.print(
-                "\nRun [cyan]sudo opensensor service install[/cyan] to install the service\n"
-            )
-            sys.exit(0)
+            console.print("\n[yellow]Service not installed[/yellow]")
+            console.print("Run: [cyan]opensensor service setup[/cyan]\n")
+            return
 
-        # Get status
-        status_output, is_active = manager.status()
+        console.print("\n[bold]Service Status[/bold]\n")
 
-        console.print("\n[bold blue]Service Status[/bold blue]\n")
-
-        # Show status indicator
-        if is_active:
-            console.print(" [green]ACTIVE[/green] - Service is running")
+        # Status indicator
+        if manager.is_active():
+            console.print("  Status: [green]RUNNING[/green]")
         else:
-            console.print(" [red]INACTIVE[/red] - Service is stopped")
+            console.print("  Status: [red]STOPPED[/red]")
 
-        console.print(f"Enabled: [cyan]{'Yes' if manager.is_enabled() else 'No'}[/cyan]")
-        console.print(f"Installed: [cyan]{'Yes' if manager.is_installed() else 'No'}[/cyan]\n")
+        console.print(f"  Enabled: [cyan]{'Yes' if manager.is_enabled() else 'No'}[/cyan]")
 
-        # Show systemctl status output
-        console.print("[dim]Detailed status:[/dim]")
-        console.print(status_output)
+        # Get detailed status
+        status_output, _ = manager.status()
+        console.print(f"\n[dim]{status_output}[/dim]")
 
     except Exception as e:
         console.print(f"[red]ERROR: {e}[/red]")
@@ -923,7 +769,7 @@ def service_status():
 @service_app.command("logs")
 def service_logs(
     follow: bool = typer.Option(False, "--follow", "-f", help="Follow log output"),
-    lines: int = typer.Option(50, "--lines", "-n", help="Number of lines to show"),
+    lines: int = typer.Option(50, "--lines", "-n", help="Number of lines"),
 ):
     """
     View service logs from journalctl.
@@ -932,11 +778,11 @@ def service_logs(
         manager = ServiceManager()
 
         if not manager.is_installed():
-            console.print("[yellow]Service is not installed[/yellow]")
-            sys.exit(0)
+            console.print("[yellow]Service not installed[/yellow]")
+            return
 
         if follow:
-            console.print("[dim]Following service logs... (Ctrl+C to stop)[/dim]\n")
+            console.print("[dim]Following logs... (Ctrl+C to stop)[/dim]\n")
 
         manager.get_logs(lines=lines, follow=follow)
 
@@ -945,168 +791,107 @@ def service_logs(
         sys.exit(1)
 
 
-@service_app.command("info")
-def service_info():
-    """
-    Show service configuration and auto-detected paths.
-    """
-    try:
-        manager = ServiceManager()
-        info = manager.get_info()
-
-        console.print("\n[bold blue]Service Configuration[/bold blue]\n")
-
-        # User & System
-        console.print("[bold]User & System:[/bold]")
-        console.print(f"  User: [cyan]{info['user']}[/cyan]")
-        console.print(f"  Group: [cyan]{info['group']}[/cyan]")
-        console.print(f"  Home: [cyan]{info['home']}[/cyan]")
-
-        # Python Environment
-        console.print("\n[bold]Python Environment:[/bold]")
-        console.print(f"  Python: [cyan]{info['python_executable']}[/cyan]")
-        console.print(f"  Virtual env: [cyan]{info['virtual_env'] or 'None'}[/cyan]")
-        console.print(f"  Is venv: [cyan]{'Yes' if info['is_venv'] else 'No'}[/cyan]")
-        console.print(f"  Installation type: [cyan]{info['installation_type']}[/cyan]")
-
-        # CLI Executable
-        console.print("\n[bold]CLI Executable:[/bold]")
-        if info["cli_executable"]:
-            exists_color = "green" if info["cli_exists"] else "red"
-            exists_text = "Yes" if info["cli_exists"] else "NO - MISSING!"
-            console.print(f"  Path: [cyan]{info['cli_executable']}[/cyan]")
-            console.print(f"  Exists: [{exists_color}]{exists_text}[/{exists_color}]")
-            console.print(f"  Found via: [dim]{info['cli_discovery_method']}[/dim]")
-        else:
-            console.print("  [red]NOT FOUND[/red]")
-            console.print("  [dim]Searched: PATH, uv tool dir, VIRTUAL_ENV, XDG_BIN_HOME[/dim]")
-
-        # Working Directory & Config
-        console.print("\n[bold]Configuration:[/bold]")
-        console.print(f"  Working directory: [cyan]{info['working_directory']}[/cyan]")
-        if info["env_file"]:
-            env_color = "green" if info["env_file_exists"] else "yellow"
-            env_status = "" if info["env_file_exists"] else " (not created yet)"
-            console.print(
-                f"  Config file: [{env_color}]{info['env_file']}{env_status}[/{env_color}]"
-            )
-        else:
-            console.print("  Config file: [yellow]None[/yellow]")
-
-        # Service Status
-        console.print("\n[bold]Service Status:[/bold]")
-        console.print(f"  Service name: [cyan]{info['service_name']}[/cyan]")
-        console.print(f"  Service file: [cyan]{info['service_file']}[/cyan]")
-        console.print(f"  Installed: [cyan]{'Yes' if info['installed'] else 'No'}[/cyan]")
-
-        if info["installed"]:
-            console.print(f"  Enabled: [cyan]{'Yes' if info['enabled'] else 'No'}[/cyan]")
-            active_color = "green" if info["active"] else "yellow"
-            console.print(
-                f"  Active: [{active_color}]{'Yes' if info['active'] else 'No'}[/{active_color}]"
-            )
-
-        # PATH (collapsed)
-        console.print("\n[bold]PATH for service:[/bold]")
-        console.print(f"  [dim]{info['path_env'][:80]}...[/dim]")
-
-        console.print()
-
-    except Exception as e:
-        console.print(f"[red]ERROR: {e}[/red]")
-        sys.exit(1)
-
-
-@service_app.command("setup")
-def service_setup():
-    """
-    Quick setup: install + enable + start the service.
-    Convenience command that combines install, enable, and start.
-    """
-    console.print("\n[bold blue]Setting up opensensor service...[/bold blue]\n")
-
+@service_app.command("start")
+def service_start():
+    """Start the service."""
     try:
         manager = ServiceManager()
 
-        # Install
-        console.print("Step 1/3: Installing service...")
-        console.print(f"  User: [cyan]{manager.user}[/cyan]")
-        console.print(f"  Project: [cyan]{manager.project_root}[/cyan]")
-        manager.install()
-        console.print("[green]Installed![/green]\n")
+        if not manager.is_installed():
+            console.print("[red]Service not installed[/red]")
+            console.print("Run: [cyan]opensensor service setup[/cyan]\n")
+            sys.exit(1)
 
-        # Enable
-        console.print("Step 2/3: Enabling service...")
-        manager.enable()
-        console.print("[green]Enabled![/green]\n")
-
-        # Start
-        console.print("Step 3/3: Starting service...")
         manager.start()
-        console.print("[green]Started![/green]\n")
-
-        console.print("[bold green]Service setup complete![/bold green]\n")
-        console.print("The opensensor service is now:")
-        console.print(" Running in the background")
-        console.print(" Enabled to start on boot")
-        console.print(" Collecting sensor data\n")
-
-        console.print("Useful commands:")
-        console.print("  View status: [cyan]sudo opensensor service status[/cyan]")
-        console.print("  View logs: [cyan]sudo opensensor service logs -f[/cyan]")
-        console.print("  Stop service: [cyan]sudo opensensor service stop[/cyan]\n")
+        console.print("[green]Service started[/green]\n")
 
     except PermissionError as e:
         console.print(f"[red]ERROR: {e}[/red]")
         sys.exit(1)
     except Exception as e:
-        console.print(f"[red]ERROR: Setup failed: {e}[/red]")
+        console.print(f"[red]ERROR: {e}[/red]")
+        sys.exit(1)
+
+
+@service_app.command("stop")
+def service_stop():
+    """Stop the service."""
+    try:
+        manager = ServiceManager()
+
+        if not manager.is_installed():
+            console.print("[yellow]Service not installed[/yellow]")
+            return
+
+        manager.stop()
+        console.print("[green]Service stopped[/green]\n")
+
+    except PermissionError as e:
+        console.print(f"[red]ERROR: {e}[/red]")
+        sys.exit(1)
+    except Exception as e:
+        console.print(f"[red]ERROR: {e}[/red]")
+        sys.exit(1)
+
+
+@service_app.command("restart")
+def service_restart():
+    """Restart the service."""
+    try:
+        manager = ServiceManager()
+
+        if not manager.is_installed():
+            console.print("[red]Service not installed[/red]")
+            sys.exit(1)
+
+        manager.restart()
+        console.print("[green]Service restarted[/green]\n")
+
+    except PermissionError as e:
+        console.print(f"[red]ERROR: {e}[/red]")
+        sys.exit(1)
+    except Exception as e:
+        console.print(f"[red]ERROR: {e}[/red]")
         sys.exit(1)
 
 
 @service_app.command("remove")
 def service_remove():
     """
-    Complete removal: stop + disable + uninstall the service.
-    Convenience command that completely removes the service.
+    Completely remove the service.
+
+    Stops, disables, and uninstalls the systemd service.
     """
-    console.print("\n[bold blue]Removing opensensor service...[/bold blue]\n")
+    console.print("\n[bold]Removing opensensor service...[/bold]\n")
 
     try:
         manager = ServiceManager()
 
         if not manager.is_installed():
-            console.print("[yellow]Service is not installed[/yellow]")
-            sys.exit(0)
+            console.print("[yellow]Service not installed[/yellow]\n")
+            return
 
         # Stop
         if manager.is_active():
-            console.print("Step 1/3: Stopping service...")
+            console.print("1. Stopping...")
             manager.stop()
-            console.print("[green]Stopped![/green]\n")
-        else:
-            console.print("Step 1/3: Service already stopped\n")
 
         # Disable
         if manager.is_enabled():
-            console.print("Step 2/3: Disabling service...")
+            console.print("2. Disabling...")
             manager.disable()
-            console.print("[green]Disabled![/green]\n")
-        else:
-            console.print("Step 2/3: Service already disabled\n")
 
         # Uninstall
-        console.print("Step 3/3: Uninstalling service...")
+        console.print("3. Removing...")
         manager.uninstall()
-        console.print("[green]Uninstalled![/green]\n")
 
-        console.print("[bold green]Service removed completely![/bold green]\n")
+        console.print("\n[green]Service removed[/green]\n")
 
     except PermissionError as e:
         console.print(f"[red]ERROR: {e}[/red]")
         sys.exit(1)
     except Exception as e:
-        console.print(f"[red]ERROR: Removal failed: {e}[/red]")
+        console.print(f"[red]ERROR: {e}[/red]")
         sys.exit(1)
 
 

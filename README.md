@@ -36,7 +36,7 @@ sudo raspi-config nonint do_spi 0
 
 # Install UV package manager (fast Python package manager)
 curl -LsSf https://astral.sh/uv/install.sh | sh
-source $HOME/.cargo/env
+source $HOME/.local/bin/env
 ```
 
 > **Note:** The I2C interface is required for BME280, LTR559, and gas sensors. SPI is needed for the LCD display. A reboot may be required after enabling these interfaces.
@@ -55,96 +55,36 @@ uv sync
 source .venv/bin/activate
 ```
 
-### Setup
+### First Time Setup
 
 ```bash
-# Fix serial port permissions for PMS5003 sensor (requires reboot after)
-sudo $(which opensensor) fix-permissions
-
-# Interactive setup (creates .env configuration)
-opensensor setup
-
-# Or non-interactive
-opensensor setup --station-id "01234567-89ab-cdef-0123-456789abcdef" --no-interactive
-
-# Test sensors with warm-up delay and table output
-opensensor test-sensors
+sudo $(which opensensor) fix-permissions   # Fix serial permissions (reboot after)
+opensensor setup                           # Configure station ID
+opensensor test                            # Verify sensors work
+opensensor service setup                   # Install & start as service
 ```
 
-### Usage
+## CLI Commands
 
-#### Run as Systemd Service (Recommended)
+| Command | Description |
+|---------|-------------|
+| `opensensor setup` | Interactive configuration wizard |
+| `opensensor test` | Test sensors with live readings table |
+| `opensensor info` | Show config, sensors, data stats, service status |
+| `opensensor start` | Run collector in foreground (for debugging) |
+| `opensensor sync` | Manual sync to cloud storage |
+| `opensensor fix-permissions` | Fix serial port permissions (sudo required) |
 
-```bash
-# Quick setup (install + enable + start) - automatically handles sudo
-opensensor service setup
+### Service Commands
 
-# View service status
-opensensor service status
-
-# View live logs
-opensensor service logs --follow
-
-# Restart service
-opensensor service restart
-
-# Stop service
-opensensor service stop
-
-# Complete removal
-opensensor service remove
-```
-
-**Note:** Service commands automatically request sudo when needed.
-
-#### Manual Commands
-
-```bash
-# Start collecting data
-opensensor start
-
-# Run in foreground (for debugging)
-opensensor start --foreground
-
-# Test sensors with warm-up and table output
-opensensor test-sensors --warmup 5 --readings 3
-
-# View status
-opensensor status
-
-# Sync to cloud
-opensensor sync
-
-# View logs
-opensensor logs
-
-# Follow logs in real-time
-opensensor logs --follow
-
-# View configuration
-opensensor config
-
-# Fix sensor permissions (requires sudo, then reboot)
-sudo $(which opensensor) fix-permissions
-```
-
-#### Service Management
-
-The service commands automatically detect your user, project path, and virtual environment:
-
-```bash
-# View auto-detected configuration
-opensensor service info
-
-# Individual service commands (automatically handle sudo)
-opensensor service install    # Create systemd service
-opensensor service enable     # Enable on boot
-opensensor service start      # Start service
-opensensor service stop       # Stop service
-opensensor service restart    # Restart service
-opensensor service disable    # Disable on boot
-opensensor service uninstall  # Remove service
-```
+| Command | Description |
+|---------|-------------|
+| `opensensor service setup` | Install, enable, and start service |
+| `opensensor service status` | Show service status |
+| `opensensor service logs -f` | Follow live logs |
+| `opensensor service stop` | Stop the service |
+| `opensensor service restart` | Restart the service |
+| `opensensor service remove` | Completely remove service |
 
 ## Configuration
 
@@ -240,7 +180,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed diagrams and scalability ana
 | IAM policies | N/A | Prefix-based scoping |
 | Logging | print statements | Rich + structured logging |
 | Memory usage | Higher (pandas) | 50% lower (Polars streaming) |
-| CLI | None | Typer with 7 commands |
+| CLI | None | Typer with 6 simple commands |
 | Read interval | 1 second | 5 seconds (configurable) |
 | Batch duration | Variable | 15 minutes (900s) |
 | Humidity correction | None | Dewpoint-based compensation |

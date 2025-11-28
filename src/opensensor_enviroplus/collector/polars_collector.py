@@ -26,6 +26,7 @@ except ImportError:
 
 from opensensor_enviroplus.config.settings import SensorConfig, StorageConfig
 from opensensor_enviroplus.sync.obstore_sync import ObstoreSync
+from opensensor_enviroplus.utils.health import collect_health_metrics, health_to_dict
 from opensensor_enviroplus.utils.logging import (
     log_batch_write,
     log_error,
@@ -55,6 +56,7 @@ class PolarsSensorCollector:
         self.config = config
         self.logger = logger
         self.buffer: list[dict[str, Any]] = []
+        self.health_buffer: list[dict[str, Any]] = []  # System health metrics
 
         # Calculate next clock-aligned batch boundary (00, 15, 30, 45 minutes)
         self.next_batch_time = self._calculate_next_batch_boundary()
@@ -63,6 +65,9 @@ class PolarsSensorCollector:
         # Sensor warm-up tracking
         self.readings_count = 0
         self.warmup_readings = 10  # Skip first 10 readings for sensor stabilization
+
+        # Health collection interval (every N sensor readings)
+        self.health_interval = 12  # ~1 minute at 5s intervals
 
         # Sync setup
         self.storage_config = storage_config
@@ -316,6 +321,10 @@ class PolarsSensorCollector:
 
         self.buffer.append(reading)
 
+        # Collect health metrics periodically (less frequent than sensor data)
+        if self.config.health_enabled and self.readings_count % self.health_interval == 0:
+            self._collect_health()
+
     def should_flush(self) -> bool:
         """
         Check if it's time to flush the batch.
@@ -324,6 +333,21 @@ class PolarsSensorCollector:
         This ensures consistent batch times across all sensors.
         """
         return datetime.now(timezone.utc) >= self.next_batch_time
+
+    def _collect_health(self) -> None:
+        """Collect system health metrics."""
+        try:
+            health = collect_health_metrics()
+            health_data = health_to_dict(health)
+            health_data["station_id"] = str(self.config.station_id)
+            self.health_buffer.append(health_data)
+            self.logger.debug(
+                f"Health: CPU={health.cpu_temp_c:.1f}°C, "
+                f"Mem={health.memory_percent_used:.0f}%, "
+                f"NTP={'synced' if health.clock_synced else 'NOT synced'}"
+            )
+        except Exception as e:
+            log_error(e, self.logger, "Health collection error")
 
     def flush_batch(self) -> None:
         """Write buffered readings using Polars and Delta Lake."""
@@ -343,6 +367,10 @@ class PolarsSensorCollector:
 
             # Write Hive-partitioned Parquet
             self._write_parquet_partitioned(df)
+
+            # Write health data if available and enabled
+            if self.config.health_enabled and self.health_buffer:
+                self._write_health_parquet()
 
             # Clear buffer and calculate next boundary
             self.buffer.clear()
@@ -481,6 +509,63 @@ class PolarsSensorCollector:
             f"Wrote {len(df_to_write)} rows to {partition_path.relative_to(self.config.output_dir)}/{filename}"
         )
 
+    def _write_health_parquet(self) -> None:
+        """
+        Write system health metrics to a separate Parquet file.
+
+        Output structure (sibling to sensor data, won't break existing queries):
+        - Sensor data: output/station={id}/year={y}/month={m}/day={d}/data_*.parquet
+        - Health data: output-health/station={id}/year={y}/month={m}/day={d}/health_*.parquet
+
+        Health data includes: CPU temp, memory, disk, WiFi signal, NTP sync status,
+        power source, uptime - critical for remote monitoring and debugging.
+        """
+        if not self.health_buffer:
+            return
+
+        batch_end = datetime.now(timezone.utc)
+
+        # Create health DataFrame
+        df = pl.DataFrame(self.health_buffer)
+
+        # Extract partition values from first timestamp
+        first_ts = df["timestamp"][0]
+        if isinstance(first_ts, str):
+            first_ts = datetime.fromisoformat(first_ts.replace("Z", "+00:00"))
+
+        year = first_ts.year
+        month = first_ts.month
+        day = first_ts.day
+
+        filename = f"health_{batch_end.strftime('%H%M')}.parquet"
+
+        # Health data goes in a sibling directory (output-health instead of output)
+        # This keeps sensor and health data completely separate with identical partition structure
+        health_output_dir = Path(str(self.config.output_dir) + "-health")
+        partition_path = (
+            health_output_dir
+            / f"station={self.config.station_id}"
+            / f"year={year}"
+            / f"month={month:02d}"
+            / f"day={day:02d}"
+        )
+
+        partition_path.mkdir(parents=True, exist_ok=True)
+        file_path = partition_path / filename
+
+        # Remove station_id (in directory structure)
+        df_to_write = df.drop("station_id")
+
+        df_to_write.write_parquet(
+            str(file_path),
+            compression=self.config.compression,
+            statistics=True,
+            use_pyarrow=False,
+        )
+
+        self.health_buffer.clear()
+        self.logger.debug(f"Wrote {len(df_to_write)} health records to {filename}")
+
     def run(self) -> None:
         """Main collection loop."""
         batch_minutes = self.config.batch_duration // 60
@@ -505,6 +590,16 @@ class PolarsSensorCollector:
             self.logger,
             "BATCH",
         )
+
+        # Health monitoring status
+        if self.config.health_enabled:
+            log_status(
+                "Health monitoring enabled (CPU, memory, disk, WiFi, NTP sync)",
+                self.logger,
+                "HEALTH",
+            )
+        else:
+            log_status("Health monitoring disabled", self.logger, "HEALTH")
 
         if self.sync_client:
             sync_minutes = self.storage_config.sync_interval_minutes

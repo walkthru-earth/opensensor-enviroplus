@@ -36,6 +36,11 @@ class SensorConfig(BaseSettings):
         default="snappy", description="Compression codec for Parquet files (snappy, zstd, gzip)"
     )
 
+    # Health monitoring
+    health_enabled: bool = Field(
+        default=True, description="Enable system health monitoring (CPU, memory, WiFi, NTP sync)"
+    )
+
     model_config = SettingsConfigDict(
         env_prefix="OPENSENSOR_",
         env_file=".env",

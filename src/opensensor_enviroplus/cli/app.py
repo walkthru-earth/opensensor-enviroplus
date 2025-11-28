@@ -331,7 +331,9 @@ def setup(
 
 
 @app.command()
-def start():
+def start(
+    foreground: bool = typer.Option(False, "--foreground", help="Run in foreground (default)"),
+):
     """
     Start the sensor data collector (foreground).
 

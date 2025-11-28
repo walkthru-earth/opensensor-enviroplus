@@ -325,7 +325,7 @@ Group={self.env.group}
 WorkingDirectory={working_dir}
 Environment=PATH={path_env}
 EnvironmentFile={env_file}
-ExecStart={cli_path} start --foreground
+ExecStart={cli_path} start
 Restart=always
 RestartSec=10
 StandardOutput=journal

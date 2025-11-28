@@ -15,8 +15,10 @@ Commands:
 import importlib.metadata
 import sys
 from pathlib import Path
+from uuid import UUID
 
 import typer
+from pydantic import ValidationError
 from rich.console import Console
 from rich.table import Table
 
@@ -113,7 +115,12 @@ def _check_sensor_availability() -> dict[str, str]:
     # PMS5003
     try:
         # Load config to get device path
-        config = SensorConfig()
+        try:
+            config = SensorConfig()
+        except ValidationError:
+            # Fallback for "on the fly" testing without setup
+            config = SensorConfig(station_id=UUID(int=0))
+
         PMS5003(device=config.pms5003_device)
         sensors_status["PMS5003"] = f"[green]OK[/green] ({config.pms5003_device})"
     except Exception as e:
@@ -460,7 +467,12 @@ def test(
     pms5003 = None
     try:
         # Load config to get device path
-        config = SensorConfig()
+        try:
+            config = SensorConfig()
+        except ValidationError:
+            # Fallback for "on the fly" testing without setup
+            config = SensorConfig(station_id=UUID(int=0))
+
         pms5003 = PMS5003(device=config.pms5003_device)
         sensors_table.add_row(
             "PMS5003",

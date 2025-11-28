@@ -30,6 +30,11 @@ class SensorConfig(BaseSettings):
         default=2.25, description="Temperature compensation factor", gt=0
     )
 
+    # Hardware configuration
+    pms5003_device: str = Field(
+        default="/dev/serial0", description="Serial device for PMS5003 sensor"
+    )
+
     # Output configuration
     output_dir: Path = Field(default=Path("output"), description="Directory for output data")
     compression: str = Field(

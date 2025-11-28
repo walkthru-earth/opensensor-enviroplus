@@ -112,8 +112,10 @@ def _check_sensor_availability() -> dict[str, str]:
 
     # PMS5003
     try:
-        PMS5003()
-        sensors_status["PMS5003"] = "[green]OK[/green]"
+        # Load config to get device path
+        config = SensorConfig()
+        PMS5003(device=config.pms5003_device)
+        sensors_status["PMS5003"] = f"[green]OK[/green] ({config.pms5003_device})"
     except Exception as e:
         sensors_status["PMS5003"] = f"[red]FAIL[/red] ({e})"
 
@@ -457,9 +459,13 @@ def test(
     # PMS5003
     pms5003 = None
     try:
-        pms5003 = PMS5003()
+        # Load config to get device path
+        config = SensorConfig()
+        pms5003 = PMS5003(device=config.pms5003_device)
         sensors_table.add_row(
-            "PMS5003", "[green]OK[/green]", "Particulate Matter (PM1, PM2.5, PM10)"
+            "PMS5003",
+            f"[green]OK[/green] ({config.pms5003_device})",
+            "Particulate Matter (PM1, PM2.5, PM10)",
         )
     except Exception as e:
         sensors_table.add_row("PMS5003", "[red]FAIL[/red]", str(e)[:40])
@@ -745,11 +751,20 @@ def fix_permissions():
             console.print(f"  [dim]Skipped {group} (not found)[/dim]")
 
     # Create udev rule for PMS5003 serial port
-    udev_rule = 'KERNEL=="ttyAMA0", GROUP="dialout", MODE="0660"'
+    # We support both /dev/ttyAMA0 and /dev/serial0 (and others if configured)
+    # But udev rules match on KERNEL name, which is usually ttyAMA0 or ttyS0
+    
+    # Try to detect which one is being used or just add rules for both common ones
+    udev_rules = [
+        'KERNEL=="ttyAMA0", GROUP="dialout", MODE="0660"',
+        'KERNEL=="ttyS0", GROUP="dialout", MODE="0660"',
+        'SYMLINK=="serial0", GROUP="dialout", MODE="0660"',
+    ]
+    
     udev_file = Path("/etc/udev/rules.d/99-pms5003.rules")
 
     try:
-        udev_file.write_text(udev_rule + "\n")
+        udev_file.write_text("\n".join(udev_rules) + "\n")
         console.print(f"\n[green]Created udev rule[/green]: {udev_file}")
     except OSError as e:
         console.print(f"[red]ERROR: {e}[/red]")

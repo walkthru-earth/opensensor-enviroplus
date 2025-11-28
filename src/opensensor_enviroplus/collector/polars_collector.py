@@ -168,8 +168,12 @@ class PolarsSensorCollector:
 
         # PMS5003: particulate matter
         try:
-            self.pms5003 = PMS5003()
-            log_status("PMS5003 particulate sensor initialized", self.logger, "")
+            self.pms5003 = PMS5003(device=self.config.pms5003_device)
+            log_status(
+                f"PMS5003 particulate sensor initialized ({self.config.pms5003_device})",
+                self.logger,
+                "",
+            )
         except Exception as e:
             log_error(e, self.logger, "PMS5003 initialization failed")
             self.pms5003 = None

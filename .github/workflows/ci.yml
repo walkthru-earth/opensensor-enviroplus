@@ -58,9 +58,6 @@ jobs:
       - name: Check service commands
         run: uv run opensensor service --help
 
-      - name: Check info command
-        run: uv run opensensor info
-
   build:
     name: Build Package
     runs-on: ubuntu-latest

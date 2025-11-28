@@ -98,8 +98,10 @@ install_uv() {
     info "Checking for UV package manager..."
 
     # Check if uv is already installed (for actual user)
-    if sudo -u "$ACTUAL_USER" bash -c 'command -v uv &> /dev/null'; then
-        success "UV already installed"
+    if sudo -u "$ACTUAL_USER" bash -c "test -f $ACTUAL_HOME/.local/bin/uv"; then
+        info "UV already installed. Updating..."
+        sudo -u "$ACTUAL_USER" bash -c "$ACTUAL_HOME/.local/bin/uv self update"
+        success "UV updated"
         return
     fi
 
@@ -123,10 +125,16 @@ install_opensensor() {
     sudo -u "$ACTUAL_USER" bash -c "
         export PATH=\"$ACTUAL_HOME/.local/bin:\$PATH\"
         source \"$ACTUAL_HOME/.local/bin/env\" 2>/dev/null || true
-        uv tool install opensensor-enviroplus
+        
+        if uv tool list | grep -q opensensor-enviroplus; then
+            echo \"Updating opensensor-enviroplus...\"
+            uv tool upgrade opensensor-enviroplus
+        else
+            uv tool install opensensor-enviroplus
+        fi
     "
 
-    success "opensensor-enviroplus installed"
+    success "opensensor-enviroplus installed/updated"
 }
 
 # Fix sensor permissions

@@ -1,5 +1,9 @@
 # OpenSensor Enviroplus
 
+[![PyPI version](https://badge.fury.io/py/opensensor-enviroplus.svg)](https://badge.fury.io/py/opensensor-enviroplus)
+[![Python Versions](https://img.shields.io/pypi/pyversions/opensensor-enviroplus.svg)](https://pypi.org/project/opensensor-enviroplus/)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/walkthru-earth/opensensor-enviroplus)
+
 Modern, CLI-based environmental sensor data collector using Polars, Apache Arrow, and Hive-partitioned Parquet for Raspberry Pi Enviro+.
 
 Part of the [OpenSensor.Space](https://opensensor.space) network for open environmental data.
@@ -209,24 +213,7 @@ output-health/                                    # System health (optional)
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed diagrams and scalability analysis.
 
-## Differences from Original
 
-| Feature | Old (enviroplus-python) | New (opensensor-enviroplus) |
-|---------|-------------------------|----------------------------|
-| Station IDs | Manual/random | UUID v7 (time-ordered) |
-| Data library | pandas + DuckDB | Polars + Apache Arrow |
-| Storage | Partitioned Parquet | Hive-partitioned Parquet |
-| Configuration | bash scripts + env vars | Pydantic Settings + .env |
-| Setup | install.sh | `opensensor setup` CLI |
-| Cloud sync | rclone (process spawn) | obstore (8 providers, Rust) |
-| IAM policies | N/A | Prefix-based scoping |
-| Logging | print statements | Rich + structured logging |
-| Memory usage | Higher (pandas) | 50% lower (Polars streaming) |
-| CLI | None | Typer with 6 simple commands |
-| Read interval | 1 second | 5 seconds (configurable) |
-| Batch duration | Variable | 15 minutes (900s) |
-| Humidity correction | None | Dewpoint-based compensation |
-| Health monitoring | None | CPU, memory, WiFi, NTP sync |
 
 ## Development
 
@@ -262,7 +249,7 @@ MIT License - see [LICENSE](LICENSE) file for details
 
 ## Credits
 
-Built by the [WalkThru Earth](https://walkthru.earth) team for the [OpenSensor.Space](https://opensensor.space) network.
+Built by the [walkthru.earth](https://walkthru.earth) team for the [OpenSensor.Space](https://opensensor.space) network.
 
 **Dependencies:**
 - [pimoroni-bme280](https://github.com/pimoroni/bme280-python) - Temperature, pressure, humidity sensor

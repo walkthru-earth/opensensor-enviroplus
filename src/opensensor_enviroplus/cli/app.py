@@ -14,9 +14,11 @@ Commands:
 
 import importlib.metadata
 import sys
+import time
 from pathlib import Path
 from uuid import UUID
 
+import click
 import typer
 from pydantic import ValidationError
 from rich.console import Console
@@ -246,7 +248,7 @@ def setup(
         provider = typer.prompt(
             "\nStorage provider",
             default="s3",
-            type=typer.Choice(
+            type=click.Choice(
                 ["s3", "r2", "gcs", "azure", "minio", "wasabi", "backblaze", "hetzner"],
                 case_sensitive=False,
             ),
@@ -394,7 +396,6 @@ def test(
 
     Initializes sensors, warms up, then displays live readings.
     """
-    import time
 
     print_banner()
     console.print("[bold]Testing Sensors[/bold]\n")

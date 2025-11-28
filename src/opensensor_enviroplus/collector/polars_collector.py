@@ -19,7 +19,7 @@ from opensensor_enviroplus.utils.compensation import (
     compensate_temperature,
     get_cpu_temperature,
 )
-from opensensor_enviroplus.utils.env import collect_health_metrics, health_to_dict
+from opensensor_enviroplus.utils.health import collect_health_metrics, health_to_dict
 from opensensor_enviroplus.utils.logging import (
     log_batch_write,
     log_error,

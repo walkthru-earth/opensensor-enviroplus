@@ -25,6 +25,7 @@ def get_user_home(username: str | None = None) -> Path:
 
     try:
         import pwd
+
         return Path(pwd.getpwnam(username).pw_dir)
     except (ImportError, KeyError):
         return Path(os.environ.get("HOME", f"/home/{username}"))
@@ -38,6 +39,7 @@ def get_user_group(username: str | None = None) -> str:
     try:
         import grp
         import pwd
+
         user_info = pwd.getpwnam(username)
         group_info = grp.getgrgid(user_info.pw_gid)
         return group_info.gr_name
@@ -200,44 +202,48 @@ def write_env_file(
     sync_enabled = config.get("OPENSENSOR_SYNC_ENABLED", "").lower() == "true"
 
     if sync_enabled:
-        lines.extend([
-            "",
-            "# Cloud Sync",
-            f"OPENSENSOR_SYNC_ENABLED={config.get('OPENSENSOR_SYNC_ENABLED', 'false')}",
-            f"OPENSENSOR_SYNC_INTERVAL_MINUTES={config.get('OPENSENSOR_SYNC_INTERVAL_MINUTES', '15')}",
-            "",
-            "# S3/MinIO Storage Settings",
-            f"OPENSENSOR_STORAGE_BUCKET={config.get('OPENSENSOR_STORAGE_BUCKET', '')}",
-            f"OPENSENSOR_STORAGE_PREFIX={config.get('OPENSENSOR_STORAGE_PREFIX', '')}",
-            f"OPENSENSOR_STORAGE_REGION={config.get('OPENSENSOR_STORAGE_REGION', 'us-west-2')}",
-            "",
-            "# AWS Credentials",
-            f"OPENSENSOR_AWS_ACCESS_KEY_ID={config.get('OPENSENSOR_AWS_ACCESS_KEY_ID', '')}",
-            f"OPENSENSOR_AWS_SECRET_ACCESS_KEY={config.get('OPENSENSOR_AWS_SECRET_ACCESS_KEY', '')}",
-        ])
+        lines.extend(
+            [
+                "",
+                "# Cloud Sync",
+                f"OPENSENSOR_SYNC_ENABLED={config.get('OPENSENSOR_SYNC_ENABLED', 'false')}",
+                f"OPENSENSOR_SYNC_INTERVAL_MINUTES={config.get('OPENSENSOR_SYNC_INTERVAL_MINUTES', '15')}",
+                "",
+                "# S3/MinIO Storage Settings",
+                f"OPENSENSOR_STORAGE_BUCKET={config.get('OPENSENSOR_STORAGE_BUCKET', '')}",
+                f"OPENSENSOR_STORAGE_PREFIX={config.get('OPENSENSOR_STORAGE_PREFIX', '')}",
+                f"OPENSENSOR_STORAGE_REGION={config.get('OPENSENSOR_STORAGE_REGION', 'us-west-2')}",
+                "",
+                "# AWS Credentials",
+                f"OPENSENSOR_AWS_ACCESS_KEY_ID={config.get('OPENSENSOR_AWS_ACCESS_KEY_ID', '')}",
+                f"OPENSENSOR_AWS_SECRET_ACCESS_KEY={config.get('OPENSENSOR_AWS_SECRET_ACCESS_KEY', '')}",
+            ]
+        )
         if endpoint := config.get("OPENSENSOR_STORAGE_ENDPOINT"):
             lines.append(f"OPENSENSOR_STORAGE_ENDPOINT={endpoint}")
     else:
         # Add commented template
         short_id = station_id[:8] if station_id else "xxxxxxxx"
-        lines.extend([
-            "",
-            "# Cloud Sync (uncomment and configure to enable)",
-            "# OPENSENSOR_SYNC_ENABLED=true",
-            "# OPENSENSOR_SYNC_INTERVAL_MINUTES=15",
-            "",
-            "# S3/MinIO Storage Settings",
-            "# OPENSENSOR_STORAGE_BUCKET=my-sensor-bucket",
-            f"# OPENSENSOR_STORAGE_PREFIX=sensors/station-{short_id}",
-            "# OPENSENSOR_STORAGE_REGION=us-west-2",
-            "",
-            "# AWS Credentials",
-            "# OPENSENSOR_AWS_ACCESS_KEY_ID=your-access-key-id",
-            "# OPENSENSOR_AWS_SECRET_ACCESS_KEY=your-secret-access-key",
-            "",
-            "# MinIO/Custom S3 Endpoint (optional)",
-            "# OPENSENSOR_STORAGE_ENDPOINT=https://minio.example.com:9000",
-        ])
+        lines.extend(
+            [
+                "",
+                "# Cloud Sync (uncomment and configure to enable)",
+                "# OPENSENSOR_SYNC_ENABLED=true",
+                "# OPENSENSOR_SYNC_INTERVAL_MINUTES=15",
+                "",
+                "# S3/MinIO Storage Settings",
+                "# OPENSENSOR_STORAGE_BUCKET=my-sensor-bucket",
+                f"# OPENSENSOR_STORAGE_PREFIX=sensors/station-{short_id}",
+                "# OPENSENSOR_STORAGE_REGION=us-west-2",
+                "",
+                "# AWS Credentials",
+                "# OPENSENSOR_AWS_ACCESS_KEY_ID=your-access-key-id",
+                "# OPENSENSOR_AWS_SECRET_ACCESS_KEY=your-secret-access-key",
+                "",
+                "# MinIO/Custom S3 Endpoint (optional)",
+                "# OPENSENSOR_STORAGE_ENDPOINT=https://minio.example.com:9000",
+            ]
+        )
 
     env_path.write_text("\n".join(lines) + "\n")
 

@@ -11,6 +11,7 @@ OpenSensor-Enviroplus enables edge devices to collect, process, and sync environ
 - **Open Standards**: Parquet, S3, Hive partitioning
 - **Simplicity**: Just files, no infrastructure
 - **Scalability**: From 1 to 1000+ sensors
+- **Observability**: Optional system health monitoring for remote debugging
 
 ---
 
@@ -648,8 +649,17 @@ The system handles numerous edge cases for robust production operation:
 - **Issue**: Raspberry Pi CPU heat affects BME280 readings
 - **Solution**: CPU temperature compensation with configurable factor
 - **Formula**: `temp - ((avg_cpu_temp - temp) / compensation_factor)`
-- **Default Factor**: 2.25 (empirically determined)
+- **Default Factor**: 2.25 (Pimoroni's official factor)
 - **Tracking**: Rolling average of last 5 CPU temp readings
+
+**5b. Humidity Compensation**
+- **Issue**: BME280's humidity reading is affected by temperature errors
+- **Solution**: Dewpoint-based compensation from Pimoroni's official examples
+- **Formula**:
+  1. Calculate dewpoint: `dewpoint = raw_temp - ((100 - raw_humidity) / 5)`
+  2. Recalculate: `humidity = 100 - (5 * (compensated_temp - dewpoint))`
+- **Data**: Both `humidity` (compensated) and `raw_humidity` stored in Parquet
+- **Reference**: https://github.com/pimoroni/enviroplus-python/blob/main/examples/weather-and-light.py
 
 **6. PMS5003 Read Timeouts**
 - **Issue**: Particulate sensor occasionally times out
@@ -740,6 +750,36 @@ The system handles numerous edge cases for robust production operation:
 - **Handling**: Graceful shutdown, flush current batch on KeyboardInterrupt
 - **Code**: Try/except KeyboardInterrupt in `run()`
 
+### **System Health Monitoring**
+
+**29. Health Metrics Collection**
+- **Purpose**: Remote monitoring and debugging of field deployments
+- **Metrics collected** (~1 minute interval):
+  - CPU temperature and load (1, 5, 15 min averages)
+  - Memory total, available, percent used
+  - Disk total, free, percent used
+  - WiFi SSID, signal strength (dBm), quality percent
+  - NTP clock sync status and offset (critical for time-series integrity)
+  - Power source (mains/battery) and battery percent
+  - System uptime
+- **Storage**: Separate `output-health/` directory with identical partition structure
+- **Configuration**: `OPENSENSOR_HEALTH_ENABLED=true|false` (default: true)
+- **Rationale**: Based on IIoT field experience - helps diagnose issues like:
+  - WiFi signal degradation
+  - Clock drift affecting data quality
+  - Power failures
+  - Disk space exhaustion
+
+**30. Health Data Separation**
+- **Issue**: Health data has different schema than sensor data
+- **Solution**: Sibling directory (`output-health/`) instead of subdirectory
+- **Benefit**: DuckDB queries on `output/**/*.parquet` work unchanged
+- **Structure**:
+  ```
+  output/           # Sensor data
+  output-health/    # Health metrics (same partition structure)
+  ```
+
 ### **Development Edge Cases**
 
 **21. Pre-commit Hook Bypass**
@@ -812,8 +852,67 @@ OPENSENSOR_STORAGE_REGION=us-west-2
 OPENSENSOR_AWS_ACCESS_KEY_ID=AKIA...
 OPENSENSOR_AWS_SECRET_ACCESS_KEY=secret...
 
+# Health Monitoring
+OPENSENSOR_HEALTH_ENABLED=true    # Enable/disable health collection
+
 # Logging
 OPENSENSOR_LOG_LEVEL=INFO
+```
+
+---
+
+## Health Monitoring
+
+System health monitoring provides visibility into edge device status for remote debugging:
+
+### Health Metrics Schema
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `timestamp` | datetime | Collection time (UTC) |
+| `cpu_temp_c` | float | CPU temperature in Celsius |
+| `cpu_load_1min` | float | 1-minute load average |
+| `cpu_load_5min` | float | 5-minute load average |
+| `cpu_load_15min` | float | 15-minute load average |
+| `memory_total_mb` | float | Total RAM in MB |
+| `memory_available_mb` | float | Available RAM in MB |
+| `memory_percent_used` | float | Memory usage percentage |
+| `disk_total_gb` | float | Total disk in GB |
+| `disk_free_gb` | float | Free disk in GB |
+| `disk_percent_used` | float | Disk usage percentage |
+| `wifi_ssid` | string | Connected WiFi network |
+| `wifi_signal_dbm` | int | Signal strength in dBm |
+| `wifi_quality_percent` | float | Signal quality (0-100%) |
+| `ip_address` | string | Primary IP address |
+| `clock_synced` | bool | NTP sync status |
+| `ntp_offset_ms` | float | Clock offset from NTP |
+| `uptime_seconds` | float | System uptime |
+| `power_source` | string | "mains", "battery", or null |
+| `battery_percent` | float | Battery level if on UPS |
+
+### Querying Health Data
+
+```sql
+-- Check NTP sync status across all stations
+SELECT
+    station,
+    timestamp,
+    clock_synced,
+    ntp_offset_ms,
+    wifi_signal_dbm
+FROM read_parquet('output-health/**/*.parquet', hive_partitioning=true)
+WHERE NOT clock_synced OR ntp_offset_ms > 100
+ORDER BY timestamp DESC;
+
+-- Monitor memory pressure
+SELECT
+    station,
+    DATE_TRUNC('hour', timestamp) as hour,
+    AVG(memory_percent_used) as avg_mem,
+    MAX(memory_percent_used) as max_mem
+FROM read_parquet('output-health/**/*.parquet', hive_partitioning=true)
+GROUP BY station, hour
+HAVING AVG(memory_percent_used) > 80;
 ```
 
 ---
@@ -829,10 +928,29 @@ OPENSENSOR_LOG_LEVEL=INFO
 
 ---
 
-**Last Updated**: 2025-11-25
-**Version**: 1.3
+**Last Updated**: 2025-11-28
+**Version**: 1.4
 
-## Recent Updates (v1.3)
+## Recent Updates (v1.4)
+
+**System Health Monitoring** (2025-11-28):
+- Added comprehensive health metrics collection (CPU, memory, disk, WiFi, NTP)
+- Separate `output-health/` directory for health data
+- Optional via `OPENSENSOR_HEALTH_ENABLED` configuration
+- Critical for remote debugging of field deployments
+
+**Humidity Compensation** (2025-11-28):
+- Implemented dewpoint-based humidity correction from Pimoroni's official examples
+- Both raw and compensated humidity values stored
+- More accurate readings when temperature compensation is enabled
+
+**Shared Utilities Refactoring** (2025-11-28):
+- New `utils/env.py` module for shared environment detection
+- Improved .env file discovery across different installation types
+- Better handling of uvx, uv tool, and venv installations
+- Reduced code duplication between CLI and service manager
+
+## Previous Updates (v1.3)
 
 **Edge Case Documentation** (2025-11-25):
 - Comprehensive edge case handling documentation

@@ -176,12 +176,15 @@ Use conventional commits:
 opensensor-enviroplus/
 ├── src/
 │   └── opensensor_enviroplus/
-│       ├── cli/           # CLI commands
-│       ├── collector/     # Data collection
-│       ├── config/        # Configuration
+│       ├── cli/           # CLI commands (app.py)
+│       ├── collector/     # Data collection (polars_collector.py)
+│       ├── config/        # Configuration (settings.py)
 │       ├── service/       # Systemd service management
-│       ├── sync/          # Cloud sync
-│       └── utils/         # Utilities
+│       ├── sync/          # Cloud sync (obstore_sync.py)
+│       └── utils/         # Shared utilities
+│           ├── env.py     # Environment detection, .env parsing
+│           ├── health.py  # System health monitoring
+│           └── logging.py # Structured logging
 ├── .github/
 │   └── workflows/         # CI/CD workflows
 ├── pyproject.toml         # Project configuration

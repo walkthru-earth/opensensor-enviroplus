@@ -16,6 +16,8 @@ Part of the [OpenSensor.Space](https://opensensor.space) network for open enviro
 - **Type Safe**: Pydantic settings with validation
 - **Production Ready**: Graceful error handling, automatic retries
 - **Browser-queryable**: DuckDB-wasm compatible Parquet output
+- **Temperature & Humidity Compensation**: CPU heat correction using Pimoroni's dewpoint formula
+- **System Health Monitoring**: Optional CPU, memory, disk, WiFi signal, NTP sync tracking
 
 ## Quick Start
 
@@ -138,9 +140,12 @@ OPENSENSOR_STATION_ID=019ab383-d789-74e2-a460-bb92b1c13681
 OPENSENSOR_READ_INTERVAL=5              # Seconds between sensor reads
 OPENSENSOR_BATCH_DURATION=900           # 15-minute batches
 
-# Temperature compensation (for Raspberry Pi CPU heat)
+# Temperature/humidity compensation (for Raspberry Pi CPU heat)
 OPENSENSOR_TEMP_COMPENSATION_ENABLED=true
-OPENSENSOR_TEMP_COMPENSATION_FACTOR=2.25
+OPENSENSOR_TEMP_COMPENSATION_FACTOR=2.25  # Pimoroni's official factor
+
+# Health monitoring (CPU, memory, disk, WiFi, NTP sync)
+OPENSENSOR_HEALTH_ENABLED=true
 
 # Output settings
 OPENSENSOR_OUTPUT_DIR=output
@@ -173,18 +178,27 @@ See `.env.example` for a complete template with IAM policy examples.
 
 ```
 Sensors (5s) -> Polars Collector -> Hive-Partitioned Parquet (15min) -> S3/MinIO (obstore)
+                    ↓
+              Health Metrics (~1min) -> Separate Parquet (output-health/)
 ```
 
 ### Output Format (Hive-Partitioned Parquet)
 
 ```
-output/
+output/                                           # Sensor data
   station=019ab383-d789-74e2-a460-bb92b1c13681/
     year=2025/
       month=11/
         day=24/
           data_1430.parquet  # Batch written at 14:30
           data_1445.parquet  # Batch written at 14:45
+
+output-health/                                    # System health (optional)
+  station=019ab383-d789-74e2-a460-bb92b1c13681/
+    year=2025/
+      month=11/
+        day=24/
+          health_1430.parquet  # ~15 health records per batch
 ```
 
 **Benefits:**
@@ -211,6 +225,8 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed diagrams and scalability ana
 | CLI | None | Typer with 7 commands |
 | Read interval | 1 second | 5 seconds (configurable) |
 | Batch duration | Variable | 15 minutes (900s) |
+| Humidity correction | None | Dewpoint-based compensation |
+| Health monitoring | None | CPU, memory, WiFi, NTP sync |
 
 ## Development
 

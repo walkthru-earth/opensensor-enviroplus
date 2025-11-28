@@ -121,9 +121,7 @@ def get_wifi_info() -> tuple[str | None, int | None, float | None]:
 
     # Try iwgetid for SSID
     try:
-        result = subprocess.run(
-            ["iwgetid", "-r"], capture_output=True, text=True, timeout=5
-        )
+        result = subprocess.run(["iwgetid", "-r"], capture_output=True, text=True, timeout=5)
         if result.returncode == 0:
             ssid = result.stdout.strip() or None
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
@@ -162,9 +160,7 @@ def get_ip_address() -> str | None:
     """Get primary IP address."""
     try:
         # Try hostname -I first (common on Linux)
-        result = subprocess.run(
-            ["hostname", "-I"], capture_output=True, text=True, timeout=5
-        )
+        result = subprocess.run(["hostname", "-I"], capture_output=True, text=True, timeout=5)
         if result.returncode == 0:
             ips = result.stdout.strip().split()
             if ips:
@@ -200,9 +196,7 @@ def get_clock_sync_status() -> tuple[bool | None, float | None]:
 
     # Try chronyc for offset (more precise)
     try:
-        result = subprocess.run(
-            ["chronyc", "tracking"], capture_output=True, text=True, timeout=5
-        )
+        result = subprocess.run(["chronyc", "tracking"], capture_output=True, text=True, timeout=5)
         if result.returncode == 0:
             for line in result.stdout.splitlines():
                 if "System time" in line:
@@ -218,9 +212,7 @@ def get_clock_sync_status() -> tuple[bool | None, float | None]:
     # Fallback: try ntpq
     if offset_ms is None:
         try:
-            result = subprocess.run(
-                ["ntpq", "-c", "rv"], capture_output=True, text=True, timeout=5
-            )
+            result = subprocess.run(["ntpq", "-c", "rv"], capture_output=True, text=True, timeout=5)
             if result.returncode == 0:
                 # Look for offset= in output
                 for part in result.stdout.split(","):

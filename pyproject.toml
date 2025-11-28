@@ -27,7 +27,6 @@ classifiers = [
 ]
 dependencies = [
     "croniter>=6.0.0",
-    "enviroplus-community>=1.0.6",
     "obstore>=0.8.2",
     "polars>=1.35.2",
     "pyarrow>=22.0.0",
@@ -36,6 +35,13 @@ dependencies = [
     "python-dotenv>=1.2.1",
     "typer>=0.20.0",  # includes rich by default
     "uuid6>=2025.0.1",
+    # Direct Enviro+ sensor libraries (replacing enviroplus-community)
+    "pimoroni-bme280>=1.0.0",  # Temperature, pressure, humidity
+    "pms5003>=1.0.1",          # Particulate matter sensor
+    "ltr559>=1.0.0",           # Light and proximity sensor
+    "ads1015>=1.0.0",          # ADC for MICS6814 gas sensor
+    "gpiod>=2.1.3",            # GPIO control
+    "gpiodevice>=0.0.3",       # GPIO device abstraction
 ]
 
 [project.scripts]

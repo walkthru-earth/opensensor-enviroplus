@@ -12,18 +12,6 @@ from typing import Any
 import polars as pl
 import pyarrow as pa
 
-# Sensor imports
-try:
-    from bme280 import BME280
-    from enviroplus import gas
-    from ltr559 import LTR559
-    from pms5003 import PMS5003, ReadTimeoutError
-    from smbus2 import SMBus
-
-    SENSORS_AVAILABLE = True
-except ImportError:
-    SENSORS_AVAILABLE = False
-
 from opensensor_enviroplus.config.settings import SensorConfig, StorageConfig
 from opensensor_enviroplus.sync.obstore_sync import ObstoreSync
 from opensensor_enviroplus.utils.health import collect_health_metrics, health_to_dict
@@ -33,6 +21,26 @@ from opensensor_enviroplus.utils.logging import (
     log_sensor_reading,
     log_status,
 )
+
+# Sensor imports (direct dependencies, no enviroplus wrapper)
+try:
+    import ads1015
+    import gpiod
+    import gpiodevice
+    from bme280 import BME280
+    from gpiod.line import Direction, Value
+    from ltr559 import LTR559
+    from pms5003 import PMS5003, ReadTimeoutError
+    from smbus2 import SMBus
+
+    SENSORS_AVAILABLE = True
+except ImportError:
+    SENSORS_AVAILABLE = False
+
+# MICS6814 gas sensor constants
+MICS6814_GAIN = 6.144
+MICS6814_I2C_ADDR = 0x49
+MICS6814_HEATER_PIN = "GPIO24"
 
 
 class PolarsSensorCollector:
@@ -117,17 +125,40 @@ class PolarsSensorCollector:
             self.bme280 = None
             self.ltr559 = None
             self.pms5003 = None
+            self.gas_adc = None
             return
 
+        # BME280: temperature, pressure, humidity
         try:
             self.bme280 = BME280(i2c_dev=SMBus(1))
-            gas.enable_adc()
-            gas.set_adc_gain(4.096)
-            log_status("BME280 and gas sensor initialized", self.logger, "")
+            log_status("BME280 sensor initialized", self.logger, "")
         except Exception as e:
             log_error(e, self.logger, "BME280 initialization failed")
             self.bme280 = None
 
+        # MICS6814 gas sensor via ADS1015 ADC (direct, no enviroplus wrapper)
+        try:
+            ads1015.I2C_ADDRESS_DEFAULT = MICS6814_I2C_ADDR
+            self.gas_adc = ads1015.ADS1015(i2c_addr=MICS6814_I2C_ADDR)
+            adc_type = self.gas_adc.detect_chip_type()
+
+            self.gas_adc.set_mode("single")
+            self.gas_adc.set_programmable_gain(MICS6814_GAIN)
+            if adc_type == "ADS1115":
+                self.gas_adc.set_sample_rate(128)
+            else:
+                self.gas_adc.set_sample_rate(1600)
+
+            # Enable heater via GPIO24
+            outh = gpiod.LineSettings(direction=Direction.OUTPUT, output_value=Value.ACTIVE)
+            self._gas_heater = gpiodevice.get_pin(MICS6814_HEATER_PIN, "EnviroPlus", outh)
+            log_status(f"MICS6814 gas sensor initialized ({adc_type})", self.logger, "")
+        except Exception as e:
+            log_error(e, self.logger, "Gas sensor initialization failed")
+            self.gas_adc = None
+            self._gas_heater = None
+
+        # LTR559: light and proximity
         try:
             self.ltr559 = LTR559()
             log_status("LTR559 light sensor initialized", self.logger, "")
@@ -135,6 +166,7 @@ class PolarsSensorCollector:
             log_error(e, self.logger, "LTR559 initialization failed")
             self.ltr559 = None
 
+        # PMS5003: particulate matter
         try:
             self.pms5003 = PMS5003()
             log_status("PMS5003 particulate sensor initialized", self.logger, "")
@@ -149,6 +181,22 @@ class PolarsSensorCollector:
                 return float(f.read()) / 1000.0
         except (OSError, ValueError):
             return 40.0
+
+    @staticmethod
+    def _voltage_to_resistance(voltage: float) -> float:
+        """
+        Convert ADC voltage to resistance for MICS6814 gas sensor.
+
+        The MICS6814 is a resistive sensor. This formula converts the voltage
+        reading from the ADS1015 ADC to resistance in Ohms.
+
+        Formula: R = (V * 56000) / (3.3 - V)
+        Where 56000 is the load resistor value and 3.3V is the reference voltage.
+        """
+        try:
+            return (voltage * 56000) / (3.3 - voltage)
+        except ZeroDivisionError:
+            return 0.0
 
     def _compensate_temperature(self, raw_temp: float) -> float:
         """Compensate temperature for CPU heat."""
@@ -212,14 +260,22 @@ class PolarsSensorCollector:
                     raw_humidity, raw_temp, compensated_temp
                 )
                 data["raw_humidity"] = raw_humidity
-
-                # Gas sensor
-                gas_data = gas.read_all()
-                data["oxidised"] = gas_data.oxidising / 1000.0
-                data["reducing"] = gas_data.reducing / 1000.0
-                data["nh3"] = gas_data.nh3 / 1000.0
             except Exception as e:
-                log_error(e, self.logger, "BME280/Gas read error")
+                log_error(e, self.logger, "BME280 read error")
+
+        # MICS6814 gas sensor via ADS1015 ADC
+        if self.gas_adc:
+            try:
+                ox = self.gas_adc.get_voltage("in0/gnd")
+                red = self.gas_adc.get_voltage("in1/gnd")
+                nh3 = self.gas_adc.get_voltage("in2/gnd")
+
+                # Convert voltage to resistance (kOhms)
+                data["oxidised"] = self._voltage_to_resistance(ox) / 1000.0
+                data["reducing"] = self._voltage_to_resistance(red) / 1000.0
+                data["nh3"] = self._voltage_to_resistance(nh3) / 1000.0
+            except Exception as e:
+                log_error(e, self.logger, "Gas sensor read error")
 
         # LTR559: light sensor
         if self.ltr559:

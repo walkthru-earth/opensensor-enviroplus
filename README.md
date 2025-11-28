@@ -27,13 +27,19 @@ Part of the [OpenSensor.Space](https://opensensor.space) network for open enviro
 # Update system packages
 sudo apt-get update
 
-# Install git
-sudo apt-get install -y git
+# Install git and required system libraries
+sudo apt-get install -y git python3-cffi libportaudio2
+
+# Enable I2C and SPI interfaces (required for sensors)
+sudo raspi-config nonint do_i2c 0
+sudo raspi-config nonint do_spi 0
 
 # Install UV package manager (fast Python package manager)
 curl -LsSf https://astral.sh/uv/install.sh | sh
 source $HOME/.cargo/env
 ```
+
+> **Note:** The I2C interface is required for BME280, LTR559, and gas sensors. SPI is needed for the LCD display. A reboot may be required after enabling these interfaces.
 
 ### Installation
 

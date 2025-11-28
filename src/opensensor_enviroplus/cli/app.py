@@ -753,14 +753,14 @@ def fix_permissions():
     # Create udev rule for PMS5003 serial port
     # We support both /dev/ttyAMA0 and /dev/serial0 (and others if configured)
     # But udev rules match on KERNEL name, which is usually ttyAMA0 or ttyS0
-    
+
     # Try to detect which one is being used or just add rules for both common ones
     udev_rules = [
         'KERNEL=="ttyAMA0", GROUP="dialout", MODE="0660"',
         'KERNEL=="ttyS0", GROUP="dialout", MODE="0660"',
         'SYMLINK=="serial0", GROUP="dialout", MODE="0660"',
     ]
-    
+
     udev_file = Path("/etc/udev/rules.d/99-pms5003.rules")
 
     try:

@@ -647,7 +647,7 @@ The system handles numerous edge cases for robust production operation:
 
 **5. Temperature Compensation**
 - **Issue**: Raspberry Pi CPU heat affects BME280 readings
-- **Solution**: CPU temperature compensation with configurable factor
+- **Solution**: CPU temperature compensation with configurable factor (applied in both collector and `opensensor test`)
 - **Formula**: `temp - ((avg_cpu_temp - temp) / compensation_factor)`
 - **Default Factor**: 2.25 (Pimoroni's official factor)
 - **Tracking**: Rolling average of last 5 CPU temp readings

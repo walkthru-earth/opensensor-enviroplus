@@ -16,7 +16,7 @@ Part of the [OpenSensor.Space](https://opensensor.space) network for open enviro
 - **Type Safe**: Pydantic settings with validation
 - **Production Ready**: Graceful error handling, automatic retries
 - **Browser-queryable**: DuckDB-wasm compatible Parquet output
-- **Temperature & Humidity Compensation**: CPU heat correction using Pimoroni's dewpoint formula
+- **Temperature & Humidity Compensation**: CPU heat correction using Pimoroni's dewpoint formula (applied in collector and CLI test)
 - **System Health Monitoring**: Optional CPU, memory, disk, WiFi signal, NTP sync tracking
 
 ## Quick Start
@@ -129,6 +129,7 @@ OPENSENSOR_BATCH_DURATION=900           # 15-minute batches
 # Temperature/humidity compensation (for Raspberry Pi CPU heat)
 OPENSENSOR_TEMP_COMPENSATION_ENABLED=true
 OPENSENSOR_TEMP_COMPENSATION_FACTOR=2.25  # Pimoroni's official factor
+OPENSENSOR_PMS5003_DEVICE=/dev/serial0  # Serial port for PMS5003
 
 # Health monitoring (CPU, memory, disk, WiFi, NTP sync)
 OPENSENSOR_HEALTH_ENABLED=true

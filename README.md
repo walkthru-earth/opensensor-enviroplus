@@ -140,7 +140,7 @@ OPENSENSOR_HEALTH_ENABLED=true
 
 # Output settings
 OPENSENSOR_OUTPUT_DIR=output
-OPENSENSOR_COMPRESSION=snappy           # Fast compression (snappy, zstd, gzip)
+OPENSENSOR_COMPRESSION=zstd             # Efficient compression (snappy, zstd, gzip)
 
 # Cloud sync (optional)
 OPENSENSOR_SYNC_ENABLED=true

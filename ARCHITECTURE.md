@@ -183,7 +183,7 @@ flowchart LR
     E --> F[Extract Partition Values<br/>year, month, day]
     F --> G[Optimize Types<br/>Float32, DateTime]
     G --> H[Build Path<br/>station=UUID/year=YYYY/...]
-    H --> I[Write Parquet<br/>Snappy compression]
+    H --> I[Write Parquet<br/>Zstd compression]
     I --> J{Sync time?}
     J -->|Yes| K[Upload to S3]
     J -->|No| L[Continue]
@@ -392,7 +392,7 @@ graph TB
 **Storage Scaling** (per sensor, per year):
 - **Readings**: 5-second interval = 6.3M readings/year
 - **Batch Files**: 15-minute batches = ~35,000 files/year
-- **File Size**: ~10-50KB per file (Snappy compressed)
+- **File Size**: ~10-50KB per file (Zstd compressed)
 - **Annual Storage**: ~350MB - 1.75GB per sensor per year
 - **500 sensors**: ~175GB - 875GB per year
 
@@ -492,7 +492,7 @@ ORDER BY hour;
 | Feature | Benefit |
 |---------|---------|
 | **Columnar Format** | 10-100x faster analytics queries |
-| **Compression** | 3-10x smaller than CSV (Snappy) |
+| **Compression** | 3-10x smaller than CSV (Zstd) |
 | **Type Safety** | Schema enforcement, no parsing errors |
 | **Partition Pruning** | Query only relevant files (year/month/day) |
 | **Universal Support** | DuckDB, Polars, Spark, Pandas all work |
@@ -540,7 +540,7 @@ ORDER BY hour;
 | **Batch Duration** | 900 seconds (15 minutes) |
 | **Readings per Batch** | ~180 readings |
 | **Memory per Batch** | ~50-100MB |
-| **File Size** | ~10-50KB (Snappy compressed) |
+| **File Size** | ~10-50KB (Zstd compressed) |
 | **Sync Interval** | 15 minutes (configurable) |
 | **Network Usage** | ~2-10MB/hour |
 | **CPU Usage** | <5% (Raspberry Pi Zero W) |

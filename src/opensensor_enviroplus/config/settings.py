@@ -38,7 +38,7 @@ class SensorConfig(BaseSettings):
     # Output configuration
     output_dir: Path = Field(default=Path("output"), description="Directory for output data")
     compression: str = Field(
-        default="snappy", description="Compression codec for Parquet files (snappy, zstd, gzip)"
+        default="zstd", description="Compression codec for Parquet files (snappy, zstd, gzip)"
     )
 
     # Health monitoring

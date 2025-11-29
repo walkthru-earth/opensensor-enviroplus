@@ -192,7 +192,7 @@ def write_env_file(
         "",
         "# Output Settings",
         f"OPENSENSOR_OUTPUT_DIR={config.get('OPENSENSOR_OUTPUT_DIR', 'output')}",
-        f"OPENSENSOR_COMPRESSION={config.get('OPENSENSOR_COMPRESSION', 'snappy')}",
+        f"OPENSENSOR_COMPRESSION={config.get('OPENSENSOR_COMPRESSION', 'zstd')}",
         "",
         "# Logging",
         f"OPENSENSOR_LOG_LEVEL={config.get('OPENSENSOR_LOG_LEVEL', 'INFO')}",

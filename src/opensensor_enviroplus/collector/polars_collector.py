@@ -562,7 +562,7 @@ class PolarsSensorCollector:
             str(file_path),
             compression=self.config.compression,
             statistics=True,
-            use_pyarrow=False,  # Use Polars native writer
+            use_pyarrow=True,  # Use PyArrow for better compatibility and file size
         )
 
         self.logger.debug(
@@ -620,7 +620,7 @@ class PolarsSensorCollector:
             str(file_path),
             compression=self.config.compression,
             statistics=True,
-            use_pyarrow=False,
+            use_pyarrow=True,
         )
 
         self.health_buffer.clear()

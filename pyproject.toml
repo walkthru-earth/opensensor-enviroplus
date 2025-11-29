@@ -1,6 +1,6 @@
 [project]
 name = "opensensor-enviroplus"
-version = "0.4.8"
+version = "0.4.9"
 description = "Modern CLI-based environmental sensor collector using Polars, Arrow, and Delta Lake for Enviro+"
 readme = "README.md"
 authors = [{ name = "Youssef Harby", email = "yharby@walkthru.earth" }]
@@ -12,6 +12,8 @@ keywords = [
     "raspberry-pi",
     "polars",
     "arrow",
+    "parquet",
+    "cloud-native",
     "iot",
     "opensensor-space",
     "walkthru-earth",
@@ -26,7 +28,6 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
-    "croniter>=6.0.0",
     "obstore>=0.8.2",
     "polars>=1.35.2",
     "pyarrow>=22.0.0",

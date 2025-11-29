@@ -541,6 +541,10 @@ def test(
             config = SensorConfig()
         except ValidationError:
             # Fallback for "on the fly" testing without setup
+            console.print(
+                "[yellow]WARNING: No configuration found. Running in temporary test mode.[/yellow]"
+            )
+            console.print("Run [cyan]opensensor setup[/cyan] to save settings permanently.\n")
             config = SensorConfig(station_id=UUID(int=0))
 
         pms5003 = PMS5003(device=config.pms5003_device)

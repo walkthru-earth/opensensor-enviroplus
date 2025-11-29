@@ -154,6 +154,9 @@ def find_env_file(search_paths: list[Path] | None = None) -> Path | None:
         # User's home directory
         search_paths.append(home)
 
+        # Common installation directory (created by install.sh)
+        search_paths.append(home / "opensensor")
+
     for search_path in search_paths:
         env_file = search_path / ".env"
         if env_file.exists():

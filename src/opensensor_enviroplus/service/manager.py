@@ -402,9 +402,18 @@ WantedBy=multi-user.target
 
     def install(self) -> None:
         """Create and install the systemd service file."""
+        # Validate environment (pre-sudo check)
+        # We check for .env file existence here to fail early
+        if not self.env.env_file or not self.env.env_file.exists():
+            expected = self.env.env_file or (self.env.working_directory / ".env")
+            raise RuntimeError(
+                f"Configuration file not found: {expected}\n"
+                "Run 'opensensor setup' first to create configuration."
+            )
+
         self._require_sudo()
 
-        # Validate environment
+        # Validate environment (post-sudo check)
         errors = self._validate_for_install()
         if errors:
             raise RuntimeError("\n\n".join(errors))

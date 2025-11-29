@@ -177,6 +177,7 @@ setup_working_dir() {
 
     sudo -u "$ACTUAL_USER" mkdir -p "$WORK_DIR"
     sudo -u "$ACTUAL_USER" mkdir -p "$WORK_DIR/output"
+    sudo -u "$ACTUAL_USER" mkdir -p "$WORK_DIR/output-health"
     sudo -u "$ACTUAL_USER" mkdir -p "$WORK_DIR/logs"
 
     success "Working directory: $WORK_DIR"

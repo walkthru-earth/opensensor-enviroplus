@@ -136,6 +136,21 @@ class StorageConfig(BaseSettings):
         return v_lower
 
 
+class HealthStorageConfig(StorageConfig):
+    """
+    Health data storage configuration.
+    Inherits all fields from StorageConfig but uses OPENSENSOR_HEALTH_ prefix.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="OPENSENSOR_HEALTH_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+
 class AppConfig(BaseSettings):
     """Application-wide configuration."""
 

@@ -132,6 +132,8 @@ class ObstoreSync:
         credential_provider = None
         if self.config.aws_access_key_id and self.config.aws_secret_access_key:
             # Create a credential provider closure that returns static credentials
+            # obstore requires: access_key_id, secret_access_key, and optionally
+            # token (for session tokens) and expires_at (datetime for expiry)
             access_key = self.config.aws_access_key_id
             secret_key = self.config.aws_secret_access_key
 
@@ -139,6 +141,8 @@ class ObstoreSync:
                 return {
                     "access_key_id": access_key,
                     "secret_access_key": secret_key,
+                    "token": None,  # No session token for static credentials
+                    "expires_at": None,  # Static credentials don't expire
                 }
 
             credential_provider = get_credentials

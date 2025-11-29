@@ -621,6 +621,8 @@ def start(
 
         # Create required directories
         sensor_config.output_dir.mkdir(parents=True, exist_ok=True)
+        if sensor_config.health_enabled and sensor_config.health_dir:
+            sensor_config.health_dir.mkdir(parents=True, exist_ok=True)
         app_config.log_dir.mkdir(parents=True, exist_ok=True)
 
         # Check and display sensor availability at startup

@@ -63,8 +63,9 @@ class SensorConfig(BaseSettings):
 
     @model_validator(mode="after")
     def compute_health_dir(self) -> "SensorConfig":
-        """Default health_dir to output_dir + '-health' if not set."""
-        if self.health_dir is None:
+        """Default health_dir to output_dir + '-health' if not set or empty."""
+        # Handle both None and empty Path("") cases
+        if self.health_dir is None or str(self.health_dir) == "":
             self.health_dir = Path(str(self.output_dir) + "-health")
         return self
 

@@ -258,9 +258,34 @@ class ObstoreSync:
             self.logger.warning("Sync not configured")
             return 0
 
-        local_dir = Path(local_dir)
+        local_dir = Path(local_dir).resolve()
         if not local_dir.exists():
             self.logger.warning(f"Directory not found: {local_dir}")
+            return 0
+
+        # Safety check: refuse to sync from dangerous directories
+        # This prevents accidentally uploading system files, caches, or unrelated data
+        dangerous_paths = [
+            Path.home(),
+            Path("/"),
+            Path("/home"),
+            Path("/tmp"),
+            Path("/var"),
+        ]
+        for dangerous in dangerous_paths:
+            if local_dir == dangerous.resolve():
+                self.logger.error(
+                    f"Refusing to sync from {local_dir} - this would upload unrelated files. "
+                    f"Check your output_dir or health_dir configuration."
+                )
+                return 0
+
+        # Additional safety: refuse if directory name suggests it's a cache or system dir
+        dir_name = local_dir.name.lower()
+        if dir_name in (".cache", ".local", ".config", "cache", "tmp", "temp"):
+            self.logger.error(
+                f"Refusing to sync from {local_dir} - appears to be a cache/temp directory."
+            )
             return 0
 
         files_synced = 0
@@ -275,11 +300,21 @@ class ObstoreSync:
                 self.logger.info("Offline - skipping sync, will retry next interval")
                 return 0
 
-            # Find all Parquet files (Hive-partitioned structure)
+            # Find Parquet files matching Hive partition pattern only
+            # Pattern: station=*/year=*/month=*/day=*/*.parquet
+            # This prevents syncing unrelated .parquet files (e.g., from pip packages)
             for file_path in local_dir.rglob("*.parquet"):
-                # Create remote path maintaining directory structure
                 relative_path = file_path.relative_to(local_dir)
-                remote_path = str(relative_path).replace("\\", "/")
+                relative_str = str(relative_path)
+
+                # Validate Hive partition structure
+                if not self._is_valid_partition_path(relative_str):
+                    self.logger.debug(
+                        f"Skipping {file_path.name} - not in Hive partition structure"
+                    )
+                    continue
+
+                remote_path = relative_str.replace("\\", "/")
 
                 # Check if file needs upload
                 if self._should_upload(file_path, remote_path):
@@ -308,6 +343,52 @@ class ObstoreSync:
                 log_error(e, self.logger, f"Sync failed after {files_synced} files")
 
         return files_synced
+
+    def _is_valid_partition_path(self, relative_path: str) -> bool:
+        """
+        Check if a file path matches the expected Hive partition structure.
+
+        Valid patterns:
+        - station=*/year=*/month=*/day=*/*.parquet (sensor/health data)
+
+        Invalid patterns:
+        - .cache/uv/*/pyarrow/tests/*.parquet (pip package test data)
+        - .local/share/*/site-packages/*.parquet (installed packages)
+        - output/*.parquet (nested output directory - wrong base)
+
+        Args:
+            relative_path: Path relative to sync directory
+
+        Returns:
+            True if path matches Hive partition pattern
+        """
+        import re
+
+        # Must match Hive partition pattern: station=*/year=*/month=*/day=*/*.parquet
+        # Allow for data_*.parquet or health_*.parquet filenames
+        pattern = r"^station=[^/]+/year=\d{4}/month=\d{2}/day=\d{2}/(?:data|health)_\d{4}\.parquet$"
+
+        if re.match(pattern, relative_path):
+            return True
+
+        # Reject paths that look like package data or caches
+        suspicious_patterns = [
+            r"\.cache/",
+            r"\.local/",
+            r"site-packages/",
+            r"pyarrow/tests/",
+            r"__pycache__/",
+            r"\.venv/",
+            r"venv/",
+            r"output/",  # Nested output dir is wrong
+        ]
+        for sus in suspicious_patterns:
+            if re.search(sus, relative_path):
+                return False
+
+        # For backwards compatibility, also accept paths that start with station=
+        # even if they don't perfectly match (e.g., custom filenames)
+        return relative_path.startswith("station=") and "/year=" in relative_path
 
     def _refresh_remote_cache(self) -> None:
         """

@@ -101,12 +101,6 @@ class ObstoreSync:
         # Build config dict
         config_dict: dict[str, Any] = {}
 
-        # Credentials
-        if self.config.aws_access_key_id:
-            config_dict["aws_access_key_id"] = self.config.aws_access_key_id
-        if self.config.aws_secret_access_key:
-            config_dict["aws_secret_access_key"] = self.config.aws_secret_access_key
-
         # Region
         if self.config.storage_region:
             config_dict["aws_region"] = self.config.storage_region
@@ -130,7 +124,32 @@ class ObstoreSync:
             prefix = self.config.storage_prefix.strip("/")
             url = f"{url}/{prefix}"
 
-        self.store = S3Store.from_url(url, config=config_dict)
+        # Use credential provider to prevent IMDS fallback on non-EC2 environments.
+        # When obstore doesn't find credentials in config, it falls back to the AWS
+        # credential chain which includes IMDS (169.254.169.254). On Raspberry Pi
+        # or other non-EC2 hosts, this causes a 15+ second timeout.
+        # Using a credential provider bypasses the entire fallback chain.
+        credential_provider = None
+        if self.config.aws_access_key_id and self.config.aws_secret_access_key:
+            # Create a credential provider closure that returns static credentials
+            access_key = self.config.aws_access_key_id
+            secret_key = self.config.aws_secret_access_key
+
+            def get_credentials() -> dict[str, Any]:
+                return {
+                    "access_key_id": access_key,
+                    "secret_access_key": secret_key,
+                }
+
+            credential_provider = get_credentials
+        else:
+            # No credentials provided - use skip_signature for anonymous access
+            # This prevents IMDS lookup for public buckets
+            config_dict["skip_signature"] = "true"
+
+        self.store = S3Store.from_url(
+            url, config=config_dict, credential_provider=credential_provider
+        )
 
     def _init_gcs(self) -> None:
         """Initialize Google Cloud Storage store."""

@@ -105,6 +105,7 @@ sudo opensensor service setup     # Install & start as service
 | `opensensor info` | Show config, sensors, data stats, service status |
 | `opensensor start` | Run collector in foreground (for debugging) |
 | `opensensor sync` | Manual sync to cloud storage |
+| `opensensor --version` | Show package version |
 | `opensensor fix-permissions` | Fix serial port permissions (sudo required) |
 
 ### Service Commands

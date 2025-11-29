@@ -150,6 +150,95 @@ class HealthStorageConfig(StorageConfig):
         extra="ignore",
     )
 
+    @classmethod
+    def with_fallback(cls, main_config: StorageConfig | None) -> "HealthStorageConfig":
+        """
+        Create HealthStorageConfig with fallback to main StorageConfig.
+
+        This factory method handles the common case where health data should use
+        the same storage credentials as the main data, but with a different prefix.
+
+        Inheritance rules:
+        1. If OPENSENSOR_HEALTH_* env vars are set, they take precedence
+        2. If not set, inherit from main_config
+        3. If main sync is enabled but health sync isn't explicitly configured,
+           enable health sync automatically with inherited settings
+        4. Default health prefix is "{main_prefix}-health" if not specified
+
+        Args:
+            main_config: The main StorageConfig to inherit from (can be None)
+
+        Returns:
+            HealthStorageConfig with proper fallback values
+        """
+        # First, load from environment (OPENSENSOR_HEALTH_* prefix)
+        health_config = cls()
+
+        if main_config is None:
+            return health_config
+
+        # Inherit sync_enabled if not explicitly set and main is enabled
+        if not health_config.sync_enabled and main_config.sync_enabled:
+            health_config = health_config.model_copy(update={"sync_enabled": True})
+
+        # If health sync is enabled but no bucket configured, inherit everything
+        if health_config.sync_enabled and not health_config.storage_bucket:
+            updates = {
+                "storage_provider": main_config.storage_provider,
+                "storage_bucket": main_config.storage_bucket,
+                "storage_region": main_config.storage_region,
+                "storage_endpoint": main_config.storage_endpoint,
+                "aws_access_key_id": main_config.aws_access_key_id,
+                "aws_secret_access_key": main_config.aws_secret_access_key,
+                "gcs_service_account_path": main_config.gcs_service_account_path,
+                "azure_storage_account": main_config.azure_storage_account,
+                "azure_storage_key": main_config.azure_storage_key,
+                "azure_sas_token": main_config.azure_sas_token,
+            }
+            # Set default health prefix
+            if not health_config.storage_prefix and main_config.storage_prefix:
+                updates["storage_prefix"] = f"{main_config.storage_prefix}-health"
+
+            health_config = health_config.model_copy(update=updates)
+
+        # If bucket is set but credentials are missing, inherit credentials only
+        # (user may have set a custom prefix but wants to reuse main credentials)
+        elif (
+            health_config.sync_enabled
+            and health_config.storage_bucket
+            and health_config.storage_provider == main_config.storage_provider
+        ):
+            updates = {}
+
+            # Inherit S3-compatible credentials
+            if not health_config.aws_access_key_id and main_config.aws_access_key_id:
+                updates["aws_access_key_id"] = main_config.aws_access_key_id
+            if not health_config.aws_secret_access_key and main_config.aws_secret_access_key:
+                updates["aws_secret_access_key"] = main_config.aws_secret_access_key
+
+            # Inherit GCS credentials
+            if not health_config.gcs_service_account_path and main_config.gcs_service_account_path:
+                updates["gcs_service_account_path"] = main_config.gcs_service_account_path
+
+            # Inherit Azure credentials
+            if not health_config.azure_storage_account and main_config.azure_storage_account:
+                updates["azure_storage_account"] = main_config.azure_storage_account
+            if not health_config.azure_storage_key and main_config.azure_storage_key:
+                updates["azure_storage_key"] = main_config.azure_storage_key
+            if not health_config.azure_sas_token and main_config.azure_sas_token:
+                updates["azure_sas_token"] = main_config.azure_sas_token
+
+            # Inherit region/endpoint if using defaults
+            if health_config.storage_region == "us-west-2":  # Default value
+                updates["storage_region"] = main_config.storage_region
+            if not health_config.storage_endpoint and main_config.storage_endpoint:
+                updates["storage_endpoint"] = main_config.storage_endpoint
+
+            if updates:
+                health_config = health_config.model_copy(update=updates)
+
+        return health_config
+
 
 class AppConfig(BaseSettings):
     """Application-wide configuration."""

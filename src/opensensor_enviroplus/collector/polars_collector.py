@@ -92,51 +92,14 @@ class PolarsSensorCollector:
             self.sync_client = ObstoreSync(config=storage_config, logger=logger)
 
         # Initialize health sync client
-        # Logic:
-        # 1. If health config has sync_enabled=True, use it.
-        # 2. If health config has sync_enabled=False (default) but main sync is enabled,
-        #    we assume health sync is desired and inherit settings from main config.
-        if health_storage_config:
-            # Inherit enabled state if not explicitly set (default is False)
-            if (
-                not health_storage_config.sync_enabled
-                and storage_config
-                and storage_config.sync_enabled
-            ):
-                health_storage_config.sync_enabled = True
-
-            # If enabled (explicitly or via inheritance), ensure we have required settings
-            if health_storage_config.sync_enabled:
-                # If bucket is missing, inherit everything from main config
-                if not health_storage_config.storage_bucket and storage_config:
-                    health_storage_config.storage_provider = storage_config.storage_provider
-                    health_storage_config.storage_bucket = storage_config.storage_bucket
-                    health_storage_config.storage_region = storage_config.storage_region
-                    health_storage_config.storage_endpoint = storage_config.storage_endpoint
-                    health_storage_config.aws_access_key_id = storage_config.aws_access_key_id
-                    health_storage_config.aws_secret_access_key = (
-                        storage_config.aws_secret_access_key
-                    )
-                    health_storage_config.gcs_service_account_path = (
-                        storage_config.gcs_service_account_path
-                    )
-                    health_storage_config.azure_storage_account = (
-                        storage_config.azure_storage_account
-                    )
-                    health_storage_config.azure_storage_key = storage_config.azure_storage_key
-                    health_storage_config.azure_sas_token = storage_config.azure_sas_token
-
-                    # Set default health prefix if missing
-                    if not health_storage_config.storage_prefix and storage_config.storage_prefix:
-                        health_storage_config.storage_prefix = (
-                            f"{storage_config.storage_prefix}-health"
-                        )
-
-                # Initialize client if we have a valid config
-                if health_storage_config.storage_bucket:
-                    self.health_sync_client = ObstoreSync(
-                        config=health_storage_config, logger=logger
-                    )
+        # The health_storage_config should already have proper fallback values
+        # applied via HealthStorageConfig.with_fallback() at the call site.
+        if (
+            health_storage_config
+            and health_storage_config.sync_enabled
+            and health_storage_config.storage_bucket
+        ):
+            self.health_sync_client = ObstoreSync(config=health_storage_config, logger=logger)
 
         if (storage_config and storage_config.sync_enabled) or (
             health_storage_config and health_storage_config.sync_enabled

@@ -615,7 +615,8 @@ def start(
         # Load configuration
         sensor_config = SensorConfig()
         storage_config = StorageConfig()
-        health_storage_config = HealthStorageConfig()
+        # Use factory method to apply credential fallback from main config
+        health_storage_config = HealthStorageConfig.with_fallback(storage_config)
         app_config = AppConfig()
 
         # Create required directories

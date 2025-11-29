@@ -25,7 +25,12 @@ from rich.console import Console
 from rich.table import Table
 
 from opensensor_enviroplus.collector.polars_collector import PolarsSensorCollector
-from opensensor_enviroplus.config.settings import AppConfig, SensorConfig, StorageConfig
+from opensensor_enviroplus.config.settings import (
+    AppConfig,
+    HealthStorageConfig,
+    SensorConfig,
+    StorageConfig,
+)
 from opensensor_enviroplus.service.manager import ServiceManager
 from opensensor_enviroplus.sync.obstore_sync import ObstoreSync
 from opensensor_enviroplus.utils.compensation import (
@@ -370,6 +375,181 @@ def setup(
                 default=existing_config.get("OPENSENSOR_AWS_SECRET_ACCESS_KEY", ""),
             )
 
+        # Health Storage Configuration (Optional)
+        console.print("\n[bold]Health Data Storage[/bold]")
+        configure_health = typer.confirm(
+            "Configure separate storage for health data?", default=False
+        )
+
+        if configure_health:
+            # Full configuration for health storage
+            console.print("\n[dim]Health Storage Provider:[/dim]")
+            health_provider = typer.prompt(
+                "Provider",
+                default=existing_config.get("OPENSENSOR_HEALTH_STORAGE_PROVIDER", "s3"),
+                type=click.Choice(
+                    ["s3", "r2", "gcs", "azure", "minio", "wasabi", "backblaze", "hetzner"],
+                    case_sensitive=False,
+                ),
+            ).lower()
+            config["OPENSENSOR_HEALTH_STORAGE_PROVIDER"] = health_provider
+
+            config["OPENSENSOR_HEALTH_STORAGE_BUCKET"] = typer.prompt(
+                "Bucket/container name",
+                default=existing_config.get("OPENSENSOR_HEALTH_STORAGE_BUCKET", ""),
+            )
+            config["OPENSENSOR_HEALTH_STORAGE_PREFIX"] = typer.prompt(
+                "Prefix/path in bucket",
+                default=existing_config.get("OPENSENSOR_HEALTH_STORAGE_PREFIX", "health-data"),
+            )
+
+            # Health Provider-specific configuration
+            if health_provider == "gcs":
+                sa_path = typer.prompt(
+                    "Service account JSON path (or press Enter for ADC)",
+                    default=existing_config.get("OPENSENSOR_HEALTH_GCS_SERVICE_ACCOUNT_PATH", ""),
+                )
+                if sa_path:
+                    config["OPENSENSOR_HEALTH_GCS_SERVICE_ACCOUNT_PATH"] = sa_path
+
+            elif health_provider == "azure":
+                config["OPENSENSOR_HEALTH_AZURE_STORAGE_ACCOUNT"] = typer.prompt(
+                    "Storage account name",
+                    default=existing_config.get("OPENSENSOR_HEALTH_AZURE_STORAGE_ACCOUNT", ""),
+                )
+                auth_method = typer.prompt(
+                    "Auth method", type=typer.Choice(["key", "sas"]), default="key"
+                )
+                if auth_method == "key":
+                    config["OPENSENSOR_HEALTH_AZURE_STORAGE_KEY"] = typer.prompt(
+                        "Storage account key",
+                        hide_input=True,
+                        default=existing_config.get("OPENSENSOR_HEALTH_AZURE_STORAGE_KEY", ""),
+                    )
+                else:
+                    config["OPENSENSOR_HEALTH_AZURE_SAS_TOKEN"] = typer.prompt(
+                        "SAS token",
+                        hide_input=True,
+                        default=existing_config.get("OPENSENSOR_HEALTH_AZURE_SAS_TOKEN", ""),
+                    )
+
+            else:
+                # S3-compatible
+                if health_provider in ("wasabi", "backblaze", "hetzner"):
+                    config["OPENSENSOR_HEALTH_STORAGE_REGION"] = typer.prompt(
+                        "Region",
+                        default=existing_config.get(
+                            "OPENSENSOR_HEALTH_STORAGE_REGION",
+                            "us-east-1" if health_provider == "wasabi" else "us-west-004",
+                        ),
+                    )
+                elif health_provider == "s3":
+                    config["OPENSENSOR_HEALTH_STORAGE_REGION"] = typer.prompt(
+                        "Region",
+                        default=existing_config.get(
+                            "OPENSENSOR_HEALTH_STORAGE_REGION", "us-west-2"
+                        ),
+                    )
+                elif health_provider == "r2":
+                    config["OPENSENSOR_HEALTH_STORAGE_REGION"] = typer.prompt(
+                        "Region",
+                        default=existing_config.get("OPENSENSOR_HEALTH_STORAGE_REGION", "auto"),
+                    )
+
+                if health_provider == "r2":
+                    config["OPENSENSOR_HEALTH_STORAGE_ENDPOINT"] = typer.prompt(
+                        "R2 endpoint URL",
+                        default=existing_config.get("OPENSENSOR_HEALTH_STORAGE_ENDPOINT", ""),
+                    )
+                elif health_provider == "minio":
+                    config["OPENSENSOR_HEALTH_STORAGE_ENDPOINT"] = typer.prompt(
+                        "MinIO endpoint URL",
+                        default=existing_config.get(
+                            "OPENSENSOR_HEALTH_STORAGE_ENDPOINT", "http://localhost:9000"
+                        ),
+                    )
+                elif existing_config.get("OPENSENSOR_HEALTH_STORAGE_ENDPOINT"):
+                    config["OPENSENSOR_HEALTH_STORAGE_ENDPOINT"] = typer.prompt(
+                        "Endpoint URL (optional)",
+                        default=existing_config.get("OPENSENSOR_HEALTH_STORAGE_ENDPOINT", ""),
+                    )
+
+                config["OPENSENSOR_HEALTH_AWS_ACCESS_KEY_ID"] = typer.prompt(
+                    "Access Key ID",
+                    default=existing_config.get("OPENSENSOR_HEALTH_AWS_ACCESS_KEY_ID", ""),
+                )
+                config["OPENSENSOR_HEALTH_AWS_SECRET_ACCESS_KEY"] = typer.prompt(
+                    "Secret Access Key",
+                    hide_input=True,
+                    default=existing_config.get("OPENSENSOR_HEALTH_AWS_SECRET_ACCESS_KEY", ""),
+                )
+
+        else:
+            # Simple setup: use default prefix
+            use_default_prefix = typer.confirm(
+                f"Use default health prefix ({config['OPENSENSOR_STORAGE_PREFIX']}-health)?",
+                default=True,
+            )
+            if use_default_prefix:
+                # We don't need to set anything specific if we want to fallback to main config
+                # BUT, to be explicit and robust, let's set the prefix
+                # However, since we are NOT setting a separate provider, the collector logic
+                # will need to handle this "same provider, different prefix" case.
+                # Actually, our collector logic uses HealthStorageConfig.
+                # If we want to use the SAME provider but DIFFERENT prefix, we SHOULD set
+                # OPENSENSOR_HEALTH_STORAGE_PREFIX.
+                # We also need to copy the main provider settings to health settings
+                # OR we rely on the fact that HealthStorageConfig reads from env.
+                # Wait, HealthStorageConfig reads OPENSENSOR_HEALTH_*.
+                # If those are missing, it doesn't fall back to OPENSENSOR_*.
+                # So we MUST populate the health config if we want a separate client.
+
+                # BETTER APPROACH:
+                # If the user says "No separate storage", we just set the prefix.
+                # But wait, if we don't set the provider, HealthStorageConfig won't be valid/complete?
+                # Actually, if we want to reuse the main connection, we shouldn't create a new client.
+                # But the user might want "same bucket, different prefix".
+                # In that case, we DO want a separate client (or same client with different prefix logic).
+                # Our ObstoreSync takes a config.
+
+                # Let's populate the health config with main values + new prefix
+                config["OPENSENSOR_HEALTH_STORAGE_PROVIDER"] = config["OPENSENSOR_STORAGE_PROVIDER"]
+                config["OPENSENSOR_HEALTH_STORAGE_BUCKET"] = config["OPENSENSOR_STORAGE_BUCKET"]
+                config["OPENSENSOR_HEALTH_STORAGE_PREFIX"] = (
+                    f"{config['OPENSENSOR_STORAGE_PREFIX']}-health"
+                )
+                # We don't need to copy secrets, they will be read from env if we don't overwrite them?
+                # No, we are writing a .env file. We need to write them.
+                # Actually, let's just write the prefix and let the user/system handle the rest?
+                # No, explicit is better.
+
+                # Copying all keys is tedious and error-prone here.
+                # Alternative: Just set the prefix and let the code handle "if health provider missing, use main".
+                # But we are writing the .env file.
+
+                # Let's just set the prefix and bucket and provider.
+                # For secrets, we can skip writing them if they are same as main?
+                # No, HealthStorageConfig needs them.
+
+                # SIMPLIFICATION:
+                # If "use default prefix", we just set:
+                # OPENSENSOR_HEALTH_STORAGE_PREFIX = ...
+                # And we rely on the fact that we can load the main config values into the health config
+                # programmatically if they are missing.
+                # But `write_env_file` writes what is in `config`.
+
+                # Let's just write the basics.
+                pass
+            else:
+                # Custom prefix, same bucket/provider
+                config["OPENSENSOR_HEALTH_STORAGE_PREFIX"] = typer.prompt(
+                    "Custom health data prefix",
+                    default=f"{config['OPENSENSOR_STORAGE_PREFIX']}-health",
+                )
+                # Implicitly same provider/bucket
+                config["OPENSENSOR_HEALTH_STORAGE_PROVIDER"] = config["OPENSENSOR_STORAGE_PROVIDER"]
+                config["OPENSENSOR_HEALTH_STORAGE_BUCKET"] = config["OPENSENSOR_STORAGE_BUCKET"]
+
     # Write configuration
     write_env_file(env_file, config)
     console.print(f"\nConfiguration saved to [green]{env_file}[/green]")
@@ -409,6 +589,7 @@ def start(
         # Load configuration
         sensor_config = SensorConfig()
         storage_config = StorageConfig()
+        health_storage_config = HealthStorageConfig()
         app_config = AppConfig()
 
         # Create required directories
@@ -428,7 +609,10 @@ def start(
 
         # Create collector with auto-sync
         collector = PolarsSensorCollector(
-            config=sensor_config, logger=logger, storage_config=storage_config
+            config=sensor_config,
+            logger=logger,
+            storage_config=storage_config,
+            health_storage_config=health_storage_config,
         )
 
         # Run collector

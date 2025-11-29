@@ -138,6 +138,10 @@ OPENSENSOR_PMS5003_DEVICE=/dev/serial0  # Serial port for PMS5003
 # Health monitoring (CPU, memory, disk, WiFi, NTP sync)
 OPENSENSOR_HEALTH_ENABLED=true
 
+# Health Data Storage (Optional - for separate storage)
+# OPENSENSOR_HEALTH_STORAGE_PROVIDER=gcs
+# OPENSENSOR_HEALTH_STORAGE_BUCKET=my-health-bucket
+
 # Output settings
 OPENSENSOR_OUTPUT_DIR=output
 OPENSENSOR_COMPRESSION=zstd             # Efficient compression (snappy, zstd, gzip)
@@ -183,7 +187,7 @@ See `.env.example` for a complete template with all provider configurations and 
 ```
 Sensors (5s) -> Polars Collector -> Hive-Partitioned Parquet (15min) -> S3/MinIO (obstore)
                     ↓
-              Health Metrics (~1min) -> Separate Parquet (output-health/)
+              Health Metrics (~1min) -> Separate Parquet (output-health/) -> S3/GCS (configurable)
 ```
 
 ### Output Format (Hive-Partitioned Parquet)

@@ -64,6 +64,7 @@ class PolarsSensorCollector:
         config: SensorConfig,
         logger: logging.Logger,
         storage_config: StorageConfig | None = None,
+        health_storage_config: StorageConfig | None = None,
     ):
         self.config = config
         self.logger = logger
@@ -83,12 +84,72 @@ class PolarsSensorCollector:
 
         # Sync setup
         self.storage_config = storage_config
+        self.health_storage_config = health_storage_config
         self.sync_client = None
+        self.health_sync_client = None
 
         if storage_config and storage_config.sync_enabled:
             self.sync_client = ObstoreSync(config=storage_config, logger=logger)
+
+        # Initialize health sync client
+        # Logic:
+        # 1. If health config has sync_enabled=True, use it.
+        # 2. If health config has sync_enabled=False (default) but main sync is enabled,
+        #    we assume health sync is desired and inherit settings from main config.
+        if health_storage_config:
+            # Inherit enabled state if not explicitly set (default is False)
+            if (
+                not health_storage_config.sync_enabled
+                and storage_config
+                and storage_config.sync_enabled
+            ):
+                health_storage_config.sync_enabled = True
+
+            # If enabled (explicitly or via inheritance), ensure we have required settings
+            if health_storage_config.sync_enabled:
+                # If bucket is missing, inherit everything from main config
+                if not health_storage_config.storage_bucket and storage_config:
+                    health_storage_config.storage_provider = storage_config.storage_provider
+                    health_storage_config.storage_bucket = storage_config.storage_bucket
+                    health_storage_config.storage_region = storage_config.storage_region
+                    health_storage_config.storage_endpoint = storage_config.storage_endpoint
+                    health_storage_config.aws_access_key_id = storage_config.aws_access_key_id
+                    health_storage_config.aws_secret_access_key = (
+                        storage_config.aws_secret_access_key
+                    )
+                    health_storage_config.gcs_service_account_path = (
+                        storage_config.gcs_service_account_path
+                    )
+                    health_storage_config.azure_storage_account = (
+                        storage_config.azure_storage_account
+                    )
+                    health_storage_config.azure_storage_key = storage_config.azure_storage_key
+                    health_storage_config.azure_sas_token = storage_config.azure_sas_token
+
+                    # Set default health prefix if missing
+                    if not health_storage_config.storage_prefix and storage_config.storage_prefix:
+                        health_storage_config.storage_prefix = (
+                            f"{storage_config.storage_prefix}-health"
+                        )
+
+                # Initialize client if we have a valid config
+                if health_storage_config.storage_bucket:
+                    self.health_sync_client = ObstoreSync(
+                        config=health_storage_config, logger=logger
+                    )
+
+        if (storage_config and storage_config.sync_enabled) or (
+            health_storage_config and health_storage_config.sync_enabled
+        ):
             # Calculate next clock-aligned sync boundary (00, 15, 30, 45 minutes)
-            self.next_sync_time = self._calculate_next_sync_boundary()
+            # Use interval from main config or health config (prefer main if available)
+            interval = 15
+            if storage_config:
+                interval = storage_config.sync_interval_minutes
+            elif health_storage_config:
+                interval = health_storage_config.sync_interval_minutes
+
+            self.next_sync_time = self._calculate_next_sync_boundary(interval)
         else:
             self.next_sync_time = None
 
@@ -343,7 +404,7 @@ class PolarsSensorCollector:
 
         return next_boundary
 
-    def _calculate_next_sync_boundary(self) -> datetime:
+    def _calculate_next_sync_boundary(self, interval_minutes: int = 15) -> datetime:
         """
         Calculate the next clock-aligned sync boundary.
 
@@ -351,7 +412,7 @@ class PolarsSensorCollector:
         Example: If started at 10:37 with 15min sync, next boundary is 10:45.
         """
         now = datetime.now(timezone.utc)
-        sync_minutes = self.storage_config.sync_interval_minutes
+        sync_minutes = interval_minutes
 
         # Calculate current minute aligned to sync interval
         current_minute = now.minute
@@ -486,27 +547,50 @@ class PolarsSensorCollector:
         Uses clock-aligned boundaries (00, 15, 30, 45 minutes) instead of elapsed time.
         This ensures consistent sync times across all sensors, matching batch writes.
         """
-        if not self.sync_client or not self.storage_config or not self.next_sync_time:
+        if not self.next_sync_time:
+            return False
+
+        has_sync = (self.sync_client is not None) or (self.health_sync_client is not None)
+        if not has_sync:
             return False
 
         return datetime.now(timezone.utc) >= self.next_sync_time
 
     def sync_data(self) -> None:
         """Sync data to cloud storage."""
-        if not self.sync_client:
+        if not self.sync_client and not self.health_sync_client:
             return
 
         try:
-            files_synced = self.sync_client.sync_directory(self.config.output_dir)
-            if files_synced > 0:
-                log_status(
-                    f"Synced {files_synced} files to cloud storage",
-                    self.logger,
-                    "SYNC",
-                )
+            # Sync sensor data
+            if self.sync_client:
+                files_synced = self.sync_client.sync_directory(self.config.output_dir)
+                if files_synced > 0:
+                    log_status(
+                        f"Synced {files_synced} files to cloud storage",
+                        self.logger,
+                        "SYNC",
+                    )
+
+            # Sync health data
+            if self.health_sync_client and self.config.health_dir:
+                health_synced = self.health_sync_client.sync_directory(self.config.health_dir)
+                if health_synced > 0:
+                    log_status(
+                        f"Synced {health_synced} health files to cloud storage",
+                        self.logger,
+                        "SYNC",
+                    )
 
             # Calculate next clock-aligned sync boundary
-            self.next_sync_time = self._calculate_next_sync_boundary()
+            # Use interval from main config or health config
+            interval = 15
+            if self.storage_config:
+                interval = self.storage_config.sync_interval_minutes
+            elif self.health_storage_config:
+                interval = self.health_storage_config.sync_interval_minutes
+
+            self.next_sync_time = self._calculate_next_sync_boundary(interval)
             self.logger.info(f"Next sync at: {self.next_sync_time.strftime('%H:%M:%S UTC')}")
 
         except Exception as e:
@@ -660,11 +744,25 @@ class PolarsSensorCollector:
         else:
             log_status("Health monitoring disabled", self.logger, "HEALTH")
 
-        if self.sync_client:
-            sync_minutes = self.storage_config.sync_interval_minutes
+        if self.sync_client or self.health_sync_client:
+            # Determine interval and bucket for logging
+            sync_minutes = 15
+            bucket_info = ""
+
+            if self.sync_client and self.storage_config:
+                sync_minutes = self.storage_config.sync_interval_minutes
+                bucket_info = f"to {self.storage_config.storage_bucket}"
+
+            if self.health_sync_client and self.health_storage_config:
+                if not bucket_info:
+                    sync_minutes = self.health_storage_config.sync_interval_minutes
+                    bucket_info = f"health to {self.health_storage_config.storage_bucket}"
+                else:
+                    bucket_info += f" (health to {self.health_storage_config.storage_bucket})"
+
             log_status(
                 f"Auto-sync enabled: clock-aligned {sync_minutes}min intervals (00, 15, 30, 45) "
-                f"to {self.storage_config.storage_bucket}",
+                f"{bucket_info}",
                 self.logger,
                 "SYNC",
             )
@@ -691,7 +789,7 @@ class PolarsSensorCollector:
             if self.buffer:
                 self.flush_batch()
             # Final sync on exit
-            if self.sync_client:
+            if self.sync_client or self.health_sync_client:
                 self.logger.info("Performing final sync...")
                 self.sync_data()
         except Exception as e:

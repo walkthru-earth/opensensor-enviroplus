@@ -252,6 +252,34 @@ def write_env_file(
             ]
         )
 
+    # Health Storage Configuration (if different from main)
+    # We check if any health-specific storage keys exist
+    health_storage_keys = [k for k in config if k.startswith("OPENSENSOR_HEALTH_STORAGE_")]
+
+    if health_storage_keys:
+        lines.extend(
+            [
+                "",
+                "# Health Data Storage (Separate)",
+                f"OPENSENSOR_HEALTH_STORAGE_PROVIDER={config.get('OPENSENSOR_HEALTH_STORAGE_PROVIDER', 's3')}",
+                f"OPENSENSOR_HEALTH_STORAGE_BUCKET={config.get('OPENSENSOR_HEALTH_STORAGE_BUCKET', '')}",
+                f"OPENSENSOR_HEALTH_STORAGE_PREFIX={config.get('OPENSENSOR_HEALTH_STORAGE_PREFIX', '')}",
+                f"OPENSENSOR_HEALTH_STORAGE_REGION={config.get('OPENSENSOR_HEALTH_STORAGE_REGION', 'us-west-2')}",
+            ]
+        )
+        # Add optional health storage keys if present
+        for key in [
+            "OPENSENSOR_HEALTH_AWS_ACCESS_KEY_ID",
+            "OPENSENSOR_HEALTH_AWS_SECRET_ACCESS_KEY",
+            "OPENSENSOR_HEALTH_STORAGE_ENDPOINT",
+            "OPENSENSOR_HEALTH_GCS_SERVICE_ACCOUNT_PATH",
+            "OPENSENSOR_HEALTH_AZURE_STORAGE_ACCOUNT",
+            "OPENSENSOR_HEALTH_AZURE_STORAGE_KEY",
+            "OPENSENSOR_HEALTH_AZURE_SAS_TOKEN",
+        ]:
+            if val := config.get(key):
+                lines.append(f"{key}={val}")
+
     env_path.write_text("\n".join(lines) + "\n")
 
 

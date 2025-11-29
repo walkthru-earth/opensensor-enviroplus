@@ -320,12 +320,12 @@ class ServiceManager:
         )
         try:
             config = SensorConfig(_env_file=env_file)
-            output_dir = config.output_dir
-            health_dir = config.health_dir
+            output_dir = config.output_dir.resolve()
+            health_dir = config.health_dir.resolve()
         except Exception:
             # Fallback if config loading fails
-            output_dir = working_dir / "output"
-            health_dir = working_dir / "output-health"
+            output_dir = (working_dir / "output").resolve()
+            health_dir = (working_dir / "output-health").resolve()
 
         return f"""[Unit]
 Description=OpenSensor Enviro+ Data Collector
@@ -422,13 +422,13 @@ WantedBy=multi-user.target
         # Load config to get correct paths
         try:
             config = SensorConfig(_env_file=self.env.env_file)
-            output_dir = config.output_dir
-            health_dir = config.health_dir
+            output_dir = config.output_dir.resolve()
+            health_dir = config.health_dir.resolve()
         except Exception:
-            output_dir = self.env.working_directory / "output"
-            health_dir = self.env.working_directory / "output-health"
+            output_dir = (self.env.working_directory / "output").resolve()
+            health_dir = (self.env.working_directory / "output-health").resolve()
 
-        logs_dir = self.env.working_directory / "logs"
+        logs_dir = (self.env.working_directory / "logs").resolve()
         output_dir.mkdir(parents=True, exist_ok=True)
         health_dir.mkdir(parents=True, exist_ok=True)
         logs_dir.mkdir(parents=True, exist_ok=True)

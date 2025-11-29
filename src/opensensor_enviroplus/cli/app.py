@@ -47,6 +47,14 @@ from opensensor_enviroplus.utils.health import collect_health_metrics, health_to
 from opensensor_enviroplus.utils.logging import setup_logging
 from opensensor_enviroplus.utils.uuid_gen import generate_station_id, validate_station_id
 
+
+def version_callback(value: bool):
+    if value:
+        version = importlib.metadata.version("opensensor-enviroplus")
+        console.print(f"OpenSensor Enviro+ v{version}")
+        raise typer.Exit()
+
+
 # Create Typer app with rich markup support
 app = typer.Typer(
     name="opensensor",
@@ -54,6 +62,24 @@ app = typer.Typer(
     add_completion=False,
     rich_markup_mode="rich",
 )
+
+
+@app.callback()
+def main(
+    version: bool = typer.Option(
+        None,
+        "--version",
+        "-v",
+        callback=version_callback,
+        is_eager=True,
+        help="Show the version and exit.",
+    ),
+):
+    """
+    OpenSensor.Space CLI
+    """
+    pass
+
 
 console = Console()
 

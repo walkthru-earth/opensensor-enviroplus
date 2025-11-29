@@ -150,5 +150,7 @@ jobs:
       - uses: astral-sh/setup-uv@v7
       - name: Try installing
         run: |
-          uvx --from opensensor-enviroplus opensensor info
+          # Test with uvx (one-shot run)
+          uvx --from opensensor-enviroplus opensensor --version
+          uvx --from opensensor-enviroplus opensensor --help
           echo "✅ Verified installation from PyPI"

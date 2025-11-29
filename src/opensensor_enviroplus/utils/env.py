@@ -202,8 +202,13 @@ def write_env_file(
         "",
         "# Health Monitoring (CPU, memory, disk, WiFi, NTP sync)",
         f"OPENSENSOR_HEALTH_ENABLED={config.get('OPENSENSOR_HEALTH_ENABLED', 'true')}",
-        f"OPENSENSOR_HEALTH_DIR={config.get('OPENSENSOR_HEALTH_DIR', '')}",
     ]
+
+    # Only write HEALTH_DIR if explicitly set to a non-empty value.
+    # When not set, it defaults to "{output_dir}-health" via SensorConfig.compute_health_dir.
+    # Writing an empty string causes Path("") to become Path(".") which resolves to cwd.
+    if health_dir := config.get("OPENSENSOR_HEALTH_DIR"):
+        lines.append(f"OPENSENSOR_HEALTH_DIR={health_dir}")
 
     # Cloud sync section
     sync_enabled = config.get("OPENSENSOR_SYNC_ENABLED", "").lower() == "true"

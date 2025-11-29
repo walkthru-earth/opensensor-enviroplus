@@ -14,7 +14,10 @@ Inspired by real-world IIoT experience where monitoring saved many deployments.
 """
 
 import os
+import socket
+import struct
 import subprocess
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -51,6 +54,9 @@ class HealthMetrics:
     # Power (for UPS-equipped deployments)
     power_source: str | None  # "mains", "battery", "unknown"
     battery_percent: float | None
+    # Raspberry Pi Power/Voltage
+    cpu_voltage_v: float | None
+    throttled_hex: str | None
 
 
 def get_cpu_temperature() -> float | None:
@@ -171,6 +177,49 @@ def get_ip_address() -> str | None:
     return None
 
 
+def _get_ntp_offset_socket(server: str = "pool.ntp.org") -> float | None:
+    """
+    Get NTP offset using a direct socket connection (no external deps).
+
+    Based on: https://github.com/python/cpython/blob/main/Lib/ntplib.py (simplified)
+    """
+    NTP_PACKET_FORMAT = "!12I"
+    NTP_DELTA = 2208988800  # 1970-01-01 00:00:00
+    NTP_MODE_CLIENT = 3
+    NTP_VERSION = 3
+
+    packet = bytearray(48)
+    packet[0] = (NTP_VERSION << 3) | NTP_MODE_CLIENT
+
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.settimeout(2.0)
+            s.sendto(packet, (server, 123))
+            data, address = s.recvfrom(48)
+
+            # Get receive time as soon as possible
+            dest_timestamp = time.time() + NTP_DELTA
+
+            unpacked = struct.unpack(NTP_PACKET_FORMAT, data)
+
+            # Extract timestamps (seconds since 1900)
+            # Reference timestamp (time packet left server)
+            orig_timestamp = float(unpacked[6]) + float(unpacked[7]) / 2**32
+            # Receive timestamp (time packet arrived at server)
+            recv_timestamp = float(unpacked[8]) + float(unpacked[9]) / 2**32
+            # Transmit timestamp (time packet left server)
+            tx_timestamp = float(unpacked[10]) + float(unpacked[11]) / 2**32
+
+            # Calculate offset
+            # offset = ((recv - orig) + (tx - dest)) / 2
+            offset = ((recv_timestamp - orig_timestamp) + (tx_timestamp - dest_timestamp)) / 2
+
+            return offset * 1000  # Convert to ms
+
+    except Exception:
+        return None
+
+
 def get_clock_sync_status() -> tuple[bool | None, float | None]:
     """
     Check if system clock is synchronized via NTP.
@@ -181,40 +230,69 @@ def get_clock_sync_status() -> tuple[bool | None, float | None]:
     is_synced = None
     offset_ms = None
 
-    # Try timedatectl (systemd)
+    # 1. Try timedatectl timesync-status (systemd-timesyncd default)
     try:
         result = subprocess.run(
-            ["timedatectl", "show", "--property=NTPSynchronized", "--value"],
+            ["timedatectl", "timesync-status"],
             capture_output=True,
             text=True,
             timeout=5,
         )
         if result.returncode == 0:
-            is_synced = result.stdout.strip().lower() == "yes"
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-        pass
-
-    # Try chronyc for offset (more precise)
-    try:
-        result = subprocess.run(["chronyc", "tracking"], capture_output=True, text=True, timeout=5)
-        if result.returncode == 0:
+            is_synced = True  # If this command works, we are likely synced or trying
             for line in result.stdout.splitlines():
-                if "System time" in line:
-                    # Format: "System time     : 0.000001234 seconds fast of NTP time"
-                    parts = line.split()
-                    if len(parts) >= 4:
-                        offset_sec = float(parts[3])
-                        offset_ms = offset_sec * 1000
+                if "Offset:" in line:
+                    # Format: "       Offset: +1.234ms" or "+1s"
+                    parts = line.split(":", 1)[1].strip().split()
+                    if parts:
+                        val_str = parts[0]
+                        # Parse unit
+                        if val_str.endswith("ms"):
+                            offset_ms = float(val_str[:-2])
+                        elif val_str.endswith("s"):
+                            offset_ms = float(val_str[:-1]) * 1000
+                        elif val_str.endswith("us"):
+                            offset_ms = float(val_str[:-2]) / 1000
                         break
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError, ValueError):
         pass
 
-    # Fallback: try ntpq
+    # 2. Try timedatectl show (generic systemd check)
+    if is_synced is None:
+        try:
+            result = subprocess.run(
+                ["timedatectl", "show", "--property=NTPSynchronized", "--value"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0:
+                is_synced = result.stdout.strip().lower() == "yes"
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+            pass
+
+    # 3. Try chronyc for offset (if installed)
+    if offset_ms is None:
+        try:
+            result = subprocess.run(
+                ["chronyc", "tracking"], capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0:
+                for line in result.stdout.splitlines():
+                    if "System time" in line:
+                        parts = line.split()
+                        if len(parts) >= 4:
+                            offset_sec = float(parts[3])
+                            offset_ms = offset_sec * 1000
+                            break
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError, ValueError):
+            pass
+
+    # 4. Try ntpq (if installed)
     if offset_ms is None:
         try:
             result = subprocess.run(["ntpq", "-c", "rv"], capture_output=True, text=True, timeout=5)
             if result.returncode == 0:
-                # Look for offset= in output
                 for part in result.stdout.split(","):
                     if "offset=" in part:
                         offset_str = part.split("=")[1].strip()
@@ -222,6 +300,10 @@ def get_clock_sync_status() -> tuple[bool | None, float | None]:
                         break
         except (subprocess.TimeoutExpired, FileNotFoundError, OSError, ValueError):
             pass
+
+    # 5. Fallback: Direct NTP query (no external tools needed)
+    if offset_ms is None:
+        offset_ms = _get_ntp_offset_socket()
 
     return is_synced, offset_ms
 
@@ -280,6 +362,44 @@ def get_power_status() -> tuple[str | None, float | None]:
     return power_source, battery_percent
 
 
+def get_vcgencmd_metrics() -> tuple[float | None, str | None]:
+    """
+    Get CPU voltage and throttling status using vcgencmd.
+
+    Returns (cpu_voltage_v, throttled_hex).
+    """
+    voltage = None
+    throttled = None
+
+    # Get Core Voltage
+    # Output: volt=0.8312V
+    try:
+        result = subprocess.run(
+            ["vcgencmd", "measure_volts", "core"], capture_output=True, text=True, timeout=2
+        )
+        if result.returncode == 0:
+            output = result.stdout.strip()
+            if output.startswith("volt=") and output.endswith("V"):
+                voltage = float(output[5:-1])
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError, ValueError):
+        pass
+
+    # Get Throttled Status
+    # Output: throttled=0x0
+    try:
+        result = subprocess.run(
+            ["vcgencmd", "get_throttled"], capture_output=True, text=True, timeout=2
+        )
+        if result.returncode == 0:
+            output = result.stdout.strip()
+            if output.startswith("throttled="):
+                throttled = output.split("=")[1]
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError, IndexError):
+        pass
+
+    return voltage, throttled
+
+
 def collect_health_metrics() -> HealthMetrics:
     """Collect all system health metrics."""
     cpu_load_1, cpu_load_5, cpu_load_15 = get_cpu_load()
@@ -288,6 +408,17 @@ def collect_health_metrics() -> HealthMetrics:
     wifi_ssid, wifi_signal, wifi_quality = get_wifi_info()
     clock_synced, ntp_offset = get_clock_sync_status()
     power_source, battery_percent = get_power_status()
+    cpu_voltage, throttled_hex = get_vcgencmd_metrics()
+
+    # If we detect under-voltage via vcgencmd, update power_source
+    if throttled_hex and throttled_hex != "0x0":
+        try:
+            throttled_val = int(throttled_hex, 16)
+            # Bit 0: Under-voltage detected
+            if throttled_val & 0x1:
+                power_source = "under-voltage"
+        except ValueError:
+            pass
 
     return HealthMetrics(
         timestamp=datetime.now(timezone.utc),
@@ -310,6 +441,8 @@ def collect_health_metrics() -> HealthMetrics:
         uptime_seconds=get_uptime(),
         power_source=power_source,
         battery_percent=battery_percent,
+        cpu_voltage_v=cpu_voltage,
+        throttled_hex=throttled_hex,
     )
 
 
@@ -336,4 +469,6 @@ def health_to_dict(metrics: HealthMetrics) -> dict[str, Any]:
         "uptime_seconds": metrics.uptime_seconds,
         "power_source": metrics.power_source,
         "battery_percent": metrics.battery_percent,
+        "cpu_voltage_v": metrics.cpu_voltage_v,
+        "throttled_hex": metrics.throttled_hex,
     }

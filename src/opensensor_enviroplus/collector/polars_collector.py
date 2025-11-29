@@ -6,7 +6,6 @@ Memory-efficient streaming with Delta Lake for append-capable storage.
 import logging
 import time
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Any
 
 import polars as pl
@@ -601,7 +600,7 @@ class PolarsSensorCollector:
 
         # Health data goes in a sibling directory (output-health instead of output)
         # This keeps sensor and health data completely separate with identical partition structure
-        health_output_dir = Path(str(self.config.output_dir) + "-health")
+        health_output_dir = self.config.health_dir
         partition_path = (
             health_output_dir
             / f"station={self.config.station_id}"

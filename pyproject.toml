@@ -1,6 +1,6 @@
 [project]
 name = "opensensor-enviroplus"
-version = "0.4.9"
+version = "0.5.0"
 description = "Modern CLI-based environmental sensor collector using Polars, Arrow, and Delta Lake for Enviro+"
 readme = "README.md"
 authors = [{ name = "Youssef Harby", email = "yharby@walkthru.earth" }]

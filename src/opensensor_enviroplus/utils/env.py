@@ -199,6 +199,7 @@ def write_env_file(
         "",
         "# Health Monitoring (CPU, memory, disk, WiFi, NTP sync)",
         f"OPENSENSOR_HEALTH_ENABLED={config.get('OPENSENSOR_HEALTH_ENABLED', 'true')}",
+        f"OPENSENSOR_HEALTH_DIR={config.get('OPENSENSOR_HEALTH_DIR', '')}",
     ]
 
     # Cloud sync section

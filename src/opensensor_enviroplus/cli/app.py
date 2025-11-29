@@ -38,6 +38,7 @@ from opensensor_enviroplus.utils.env import (
     parse_env_file,
     write_env_file,
 )
+from opensensor_enviroplus.utils.health import collect_health_metrics, health_to_dict
 from opensensor_enviroplus.utils.logging import setup_logging
 from opensensor_enviroplus.utils.uuid_gen import generate_station_id, validate_station_id
 
@@ -375,7 +376,14 @@ def setup(
 
     # Create directories
     out_dir = config.get("OPENSENSOR_OUTPUT_DIR", "output")
-    ensure_directories(out_dir, f"{out_dir}-health", "logs")
+    # We need to instantiate SensorConfig to get the computed health_dir
+    # But since we just wrote the env file, we can rely on the default behavior
+    # or simple string manipulation for now to avoid complex reloading
+    health_dir = config.get("OPENSENSOR_HEALTH_DIR")
+    if not health_dir:
+        health_dir = f"{out_dir}-health"
+
+    ensure_directories(out_dir, health_dir, "logs")
 
     console.print("\n[bold green]Setup complete![/bold green]")
     console.print("\nNext steps:")
@@ -653,6 +661,37 @@ def test(
             time.sleep(interval)
             console.print()
 
+            console.print()
+
+    # Health Metrics Section
+    console.print("\n[bold]System Health[/bold]\n")
+
+    try:
+        health_metrics = collect_health_metrics()
+        health_data = health_to_dict(health_metrics)
+
+        # Filter available vs unavailable
+        available = {k: v for k, v in health_data.items() if v is not None}
+        unavailable = [k for k, v in health_data.items() if v is None]
+
+        if available:
+            health_table = Table(show_header=True, header_style="bold magenta")
+            health_table.add_column("Metric")
+            health_table.add_column("Value")
+
+            for key, value in available.items():
+                health_table.add_row(key, str(value))
+
+            console.print(health_table)
+
+        if unavailable:
+            console.print("\n[yellow]Unavailable Metrics:[/yellow]")
+            for key in unavailable:
+                console.print(f"  - {key}")
+
+    except Exception as e:
+        console.print(f"[red]Error collecting health metrics: {e}[/red]")
+
     console.print("\n[bold green]Test complete![/bold green]")
     console.print("\nNext: [cyan]opensensor service setup[/cyan] for continuous collection\n")
 
@@ -725,7 +764,12 @@ def info():
         console.print("  [dim]No data collected yet[/dim]")
 
     # Health data
-    health_dir = Path("output-health")
+    try:
+        sensor_config = SensorConfig()
+        health_dir = sensor_config.health_dir
+    except Exception:
+        health_dir = Path("output-health")
+
     if health_dir.exists():
         health_files = list(health_dir.rglob("*.parquet"))
         if health_files:

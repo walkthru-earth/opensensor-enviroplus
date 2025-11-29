@@ -18,6 +18,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from opensensor_enviroplus.config.settings import SensorConfig
 from opensensor_enviroplus.utils.env import (
     detect_installation_type,
     detect_virtual_env,
@@ -312,6 +313,20 @@ class ServiceManager:
         env_file = self.env.env_file or (self.env.working_directory / ".env")
         working_dir = self.env.working_directory
 
+        # Resolve paths using SensorConfig (handles defaults and env vars)
+        # We need to load config with the correct env file context
+        os.environ["OPENSENSOR_STATION_ID"] = (
+            "00000000-0000-0000-0000-000000000000"  # Dummy ID for validation
+        )
+        try:
+            config = SensorConfig(_env_file=env_file)
+            output_dir = config.output_dir
+            health_dir = config.health_dir
+        except Exception:
+            # Fallback if config loading fails
+            output_dir = working_dir / "output"
+            health_dir = working_dir / "output-health"
+
         return f"""[Unit]
 Description=OpenSensor Enviro+ Data Collector
 Documentation=https://opensensor.space
@@ -337,7 +352,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths={working_dir}/output {working_dir}/logs
+ReadWritePaths={output_dir} {health_dir} {working_dir}/logs
 
 [Install]
 WantedBy=multi-user.target
@@ -395,8 +410,15 @@ WantedBy=multi-user.target
             raise RuntimeError("\n\n".join(errors))
 
         # Create required directories
-        output_dir = self.env.working_directory / "output"
-        health_dir = self.env.working_directory / "output-health"
+        # Load config to get correct paths
+        try:
+            config = SensorConfig(_env_file=self.env.env_file)
+            output_dir = config.output_dir
+            health_dir = config.health_dir
+        except Exception:
+            output_dir = self.env.working_directory / "output"
+            health_dir = self.env.working_directory / "output-health"
+
         logs_dir = self.env.working_directory / "logs"
         output_dir.mkdir(parents=True, exist_ok=True)
         health_dir.mkdir(parents=True, exist_ok=True)

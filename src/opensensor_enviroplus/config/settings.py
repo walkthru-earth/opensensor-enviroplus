@@ -6,7 +6,7 @@ Supports environment variables, .env files, and CLI overrides.
 from pathlib import Path
 from uuid import UUID
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -40,6 +40,7 @@ class SensorConfig(BaseSettings):
     compression: str = Field(
         default="zstd", description="Compression codec for Parquet files (snappy, zstd, gzip)"
     )
+    health_dir: Path | None = Field(default=None, description="Directory for health data")
 
     # Health monitoring
     health_enabled: bool = Field(
@@ -59,6 +60,13 @@ class SensorConfig(BaseSettings):
     def expand_path(cls, v: Path | str) -> Path:
         """Expand ~ and environment variables in paths."""
         return Path(v).expanduser().resolve()
+
+    @model_validator(mode="after")
+    def compute_health_dir(self) -> "SensorConfig":
+        """Default health_dir to output_dir + '-health' if not set."""
+        if self.health_dir is None:
+            self.health_dir = Path(str(self.output_dir) + "-health")
+        return self
 
 
 class StorageConfig(BaseSettings):

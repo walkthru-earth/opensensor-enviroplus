@@ -19,3 +19,4 @@ logs/
 
 # UV lock file (optional - some prefer to commit it)
 # uv.lock
+.DS_Store

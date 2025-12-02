@@ -76,7 +76,7 @@ jobs:
       - name: Verify artifacts
         run: ls -lah dist/
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: python-package-distributions
           path: dist/

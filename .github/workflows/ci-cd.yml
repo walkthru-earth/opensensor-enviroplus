@@ -99,7 +99,7 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/download-artifact@v6
+      - uses: actions/download-artifact@v7
         with:
           name: python-package-distributions
           path: dist/
@@ -125,7 +125,7 @@ jobs:
       id-token: write
       contents: write # For GitHub Release
     steps:
-      - uses: actions/download-artifact@v6
+      - uses: actions/download-artifact@v7
         with:
           name: python-package-distributions
           path: dist/
